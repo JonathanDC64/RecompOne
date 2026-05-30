@@ -8,6 +8,12 @@ public static class Log
     public static bool DmaOn = true;
     public static bool CdOn = true;
     public static bool SdkOn = true;
+    public static bool MdecOn = true;
+
+    public static void Mdec(string m)
+    {
+        if (MdecOn) Console.WriteLine($"[MDEC] {m}");
+    }
 
     public static void Bios(string m)
     {

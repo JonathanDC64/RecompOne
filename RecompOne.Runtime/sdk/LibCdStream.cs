@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RecompOne.Runtime.Context;
 using RecompOne.Runtime.Memory;
 
@@ -15,6 +16,9 @@ public static class LibCdStream
     static int _readIdx;
     static int _streamLba;
     static bool _active;
+    
+    static readonly Stopwatch _clock = new();
+    static int _streamStartLba;
 
     public static void StSetRing(CpuContext c, IMemory m)
     {
@@ -53,9 +57,8 @@ public static class LibCdStream
     public static void StGetNext(CpuContext c, IMemory m)
     {
         if (!_active || Runtime.Cd == null) { c.V0 = 1; return; }
-        if (_streamLba < 0) _streamLba = LibCd.CurrentLba;
-
-        // TODO: check if this is right, it makes the fmv stop crashing at least by skipping the audio sec
+        if (_streamLba < 0) { _streamLba = LibCd.CurrentLba; _streamStartLba = _streamLba; _clock.Restart(); }
+        
         byte[] first;
         int guard = 0;
         while (true)
@@ -67,8 +70,13 @@ public static class LibCdStream
         }
 
         int n = Read16(first, 6);
-        Log.Sdk($"StGetNext lba={_streamLba} chunks={n} frame#={Read32(first, 8)} readIdx={_readIdx}");
         if (n <= 0 || n > _slots) { c.V0 = 1; return; }
+        
+        double delivered = _clock.Elapsed.TotalSeconds * LibCd.SectorsPerSecond; //cd pacer
+        int needed = (_streamLba - _streamStartLba) + n;
+        if (needed > delivered) { c.V0 = 1; return; }
+
+        Log.Sdk($"StGetNext lba={_streamLba} chunks={n} frame#={Read32(first, 8)} readIdx={_readIdx} delivered={delivered:F0}");
         if (_readIdx + n > _slots) _readIdx = 0;
         
         int collected = 0;

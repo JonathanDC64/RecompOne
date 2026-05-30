@@ -1,18 +1,17 @@
 namespace RecompOne.Runtime;
 
-// TODO: not working properly, fmv runs too fast, decoding is apparently slightly wrong, should this have an time to make it run right?
 public sealed class Mdec
 {
     static readonly int[] Zigzag =
     {
-        0,  1,  5,  6,  14, 15, 27, 28,
-        2,  4,  7,  13, 16, 26, 29, 42,
-        3,  8,  12, 17, 25, 30, 41, 43,
-        9,  11, 18, 24, 31, 40, 44, 53,
-        10, 19, 23, 32, 39, 45, 52, 54,
-        20, 22, 33, 38, 46, 51, 55, 60,
-        21, 34, 37, 47, 50, 56, 59, 61,
-        35, 36, 48, 49, 57, 58, 62, 63,
+        0,  1,  8,  16, 9,  2,  3,  10,
+        17, 24, 32, 25, 18, 11, 4,  5,
+        12, 19, 26, 33, 40, 48, 41, 34,
+        27, 20, 13, 6,  7,  14, 21, 28,
+        35, 42, 49, 56, 57, 50, 43, 36,
+        29, 22, 15, 23, 30, 37, 44, 51,
+        58, 59, 52, 45, 38, 31, 39, 46,
+        53, 60, 61, 54, 47, 55, 62, 63,
     };
 
     static readonly short[] DefaultScale =
@@ -170,13 +169,15 @@ public sealed class Mdec
         var crBlock = new int[64];
         var cbBlock = new int[64];
         var yBlock = new int[64];
+        int mbStart = _out.Count;
+        int mbCount = 0;
 
         while (_readPos < _inHalfwords.Count)
         {
             if (color)
             {
                 var rgb = new byte[16 * 16 * 4];
-                DecodeBlock(_quantChroma, crBlock);
+                if (!DecodeBlock(_quantChroma, crBlock)) break;
                 DecodeBlock(_quantChroma, cbBlock);
                 for (int q = 0; q < 4; q++)
                 {
@@ -184,23 +185,28 @@ public sealed class Mdec
                     YuvToRgb(crBlock, cbBlock, yBlock, (q & 1) * 8, (q >> 1) * 8, rgb);
                 }
                 PushColor(rgb);
+                mbCount++;
             }
             else
             {
-                DecodeBlock(_quantLuma, yBlock);
+                if (!DecodeBlock(_quantLuma, yBlock)) break;
                 PushMono(yBlock);
+                mbCount++;
             }
         }
+        Log.Mdec($"decode depth={_depth} signed={_signed} bit15={_bit15} inHW={_inHalfwords.Count} consumedHW={_readPos} mbs={mbCount} wordsOut={_out.Count - mbStart} outTotal={_out.Count}");
     }
 
     ushort NextHalfword() => _readPos < _inHalfwords.Count ? _inHalfwords[_readPos++] : (ushort)0xFE00;
 
-    void DecodeBlock(byte[] qt, int[] block)
+    bool DecodeBlock(byte[] qt, int[] block)
     {
         Array.Clear(block);
 
         ushort n = NextHalfword();
         while (n == 0xFE00 && _readPos < _inHalfwords.Count) n = NextHalfword();
+
+        if (n == 0xFE00) return false;
 
         int qScale = (n >> 10) & 0x3F;
         int val = Signed10(n) * qt[0];
@@ -219,8 +225,7 @@ public sealed class Mdec
         }
 
         IdctCore(block);
-        
-        
+        return true;
     }
 
     void IdctCore(int[] blk)

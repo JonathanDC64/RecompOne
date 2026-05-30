@@ -93,6 +93,7 @@ public static class LibCd
     }
 
     internal static int CurrentLba => PosToInt(_pos);
+    internal static double SectorsPerSecond => (_mode & 0x80) != 0 ? 150.0 : 75.0; //cd pacer
 
     public static void CdReadSync(CpuContext c, IMemory m)
     {
