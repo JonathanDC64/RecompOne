@@ -1,0 +1,176 @@
+using RecompOne.Runtime.Cdrom;
+
+namespace RecompOne.Runtime.Memory;
+
+public sealed class PSMemory : IMemory
+{
+    private readonly byte[] _ram = new byte[MemoryMap.RamSize];
+    private readonly byte[] _scratchpad = new byte[MemoryMap.ScratchpadSize];
+    private readonly byte[] _hwregs = new byte[MemoryMap.HwRegsSize];
+
+    private readonly Gpu _gpu = new();
+    private readonly Spu _spu = new();
+    private readonly Mdec _mdec = new();
+    private readonly Dma _dma;
+    private CdController? _cd;
+
+    public PSMemory()
+    {
+        _dma = new Dma(this, _gpu, _spu, _mdec, () => Runtime.DispatchIrq(3));
+        Runtime.Gpu = _gpu;
+    }
+
+    public void SetCd(CdController cd) { _cd = cd; _dma.SetCd(cd); }
+
+    private static bool IsDmaChcr(uint phys) => phys >= 0x1F801080u && phys < 0x1F8010F0u && (phys & 0xFu) == 8u;
+
+    private uint Hw32(uint phys)
+    {
+        int o = (int)(phys - MemoryMap.HwRegsBase);
+        return (uint)(_hwregs[o] | (_hwregs[o + 1] << 8) | (_hwregs[o + 2] << 16) | (_hwregs[o + 3] << 24));
+    }
+
+    private void Hw32(uint phys, uint v)
+    {
+        int o = (int)(phys - MemoryMap.HwRegsBase);
+        _hwregs[o] = (byte)v;
+        _hwregs[o + 1] = (byte)(v >> 8);
+        _hwregs[o + 2] = (byte)(v >> 16);
+        _hwregs[o + 3] = (byte)(v >> 24);
+    }
+
+    private Span<byte> Resolve(uint address, int size)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+
+        if (phys < MemoryMap.RamSize)
+            return _ram.AsSpan((int)(phys % MemoryMap.RamSize), size);
+
+        if (phys >= MemoryMap.ScratchpadBase && phys < MemoryMap.ScratchpadBase + MemoryMap.ScratchpadSize)
+            return _scratchpad.AsSpan((int)(phys - MemoryMap.ScratchpadBase), size);
+
+        if (phys >= MemoryMap.HwRegsBase && phys < MemoryMap.HwRegsBase + MemoryMap.HwRegsSize)
+            return _hwregs.AsSpan((int)(phys - MemoryMap.HwRegsBase), size);
+
+        throw new InvalidOperationException($"unmapped address: 0x{address:X8}");
+    }
+
+    private static bool IsCd(uint phys) => phys >= 0x1F801800u && phys <= 0x1F801803u;
+    private static bool IsSpu(uint phys) => phys >= 0x1F801C00u && phys < 0x1F801E80u;
+
+    public byte ReadU8(uint address)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+        if (_cd != null && IsCd(phys)) return _cd.Read(phys);
+        return Resolve(address, 1)[0];
+    }
+
+    public ushort ReadU16(uint address)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+        if (_cd != null && IsCd(phys)) return _cd.Read(phys);
+        if (IsSpu(phys)) return _spu.ReadReg16(phys);
+        var s = Resolve(address, 2);
+        return (ushort)(s[0] | (s[1] << 8));
+    }
+
+    public uint ReadU32(uint address)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+        if (phys == 0x1F801810u) return _gpu.ReadData();
+        if (phys == 0x1F801814u) return _gpu.ReadStat();
+        if (phys == 0x1F801820u) return _mdec.ReadData();
+        if (phys == 0x1F801824u) return _mdec.ReadStatus();
+        if (phys == 0x1F8010F4u) return _dma.ReadDicr();
+        if (_cd != null && IsCd(phys)) return _cd.Read(phys);
+        if (IsSpu(phys)) return (uint)(_spu.ReadReg16(phys) | (_spu.ReadReg16(phys + 2) << 16));
+        var s = Resolve(address, 4);
+        return (uint)(s[0] | (s[1] << 8) | (s[2] << 16) | (s[3] << 24));
+    }
+
+    public void WriteU8(uint address, byte value)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+        if (_cd != null && IsCd(phys)) { _cd.Write(phys, value); return; }
+        Resolve(address, 1)[0] = value;
+    }
+
+    public void WriteU16(uint address, ushort value)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+        if (_cd != null && IsCd(phys)) { _cd.Write(phys, (byte)value); return; }
+        if (IsSpu(phys)) { _spu.WriteReg16(phys, value); return; }
+        var s = Resolve(address, 2);
+        s[0] = (byte)value;
+        s[1] = (byte)(value >> 8);
+    }
+
+    public void WriteU32(uint address, uint value)
+    {
+        uint phys = MemoryMap.ToPhysical(address);
+        if (phys == 0x1F801810u) { _gpu.WriteGp0(value); return; }
+        if (phys == 0x1F801814u) { _gpu.WriteGp1(value); return; }
+        if (phys == 0x1F801820u) { _mdec.Write0(value); return; }
+        if (phys == 0x1F801824u) { _mdec.WriteControl(value); return; }
+        if (phys == 0x1F8010F4u) { _dma.WriteDicr(value); return; }
+        if (IsDmaChcr(phys) && (value & 0x01000000u) != 0)
+        {
+            Hw32(phys, value & ~0x01000000u);
+            _dma.Run((int)((phys - 0x1F801080u) / 0x10u), Hw32(phys - 8u), Hw32(phys - 4u), value);
+            return;
+        }
+        if (_cd != null && IsCd(phys)) { _cd.Write(phys, (byte)value); return; }
+        if (IsSpu(phys)) { _spu.WriteReg16(phys, (ushort)value); _spu.WriteReg16(phys + 2, (ushort)(value >> 16)); return; }
+        var s = Resolve(address, 4);
+        s[0] = (byte)value;
+        s[1] = (byte)(value >> 8);
+        s[2] = (byte)(value >> 16);
+        s[3] = (byte)(value >> 24);
+    }
+
+    public uint ReadWordLeft(uint current, uint address)
+    {
+        uint aligned = address & ~3u;
+        uint shift = (address & 3) * 8;
+        uint mask = 0xFFFFFFFFu << (int)shift;
+        uint word = ReadU32(aligned);
+        return (current & ~mask) | ((word << (int)shift) & mask);
+    }
+
+    public uint ReadWordRight(uint current, uint address)
+    {
+        uint aligned = address & ~3u;
+        uint shift = ((3 - address) & 3) * 8;
+        uint mask = 0xFFFFFFFFu >> (int)shift;
+        uint word = ReadU32(aligned);
+        return (current & ~mask) | ((word >> (int)shift) & mask);
+    }
+
+    public void WriteWordLeft(uint address, uint value)
+    {
+        uint aligned = address & ~3u;
+        uint byteOff = address & 3;
+        for (uint i = 0; i <= byteOff; i++)
+            WriteU8(aligned + i, (byte)(value >> (int)((byteOff - i) * 8)));
+    }
+
+    public void WriteWordRight(uint address, uint value)
+    {
+        uint aligned = address & ~3u;
+        uint byteOff = address & 3;
+        for (uint i = byteOff; i < 4; i++)
+            WriteU8(aligned + i, (byte)(value >> (int)((i - byteOff) * 8)));
+    }
+
+    public void LoadBytes(uint address, byte[] data)
+    {
+        for (int i = 0; i < data.Length; i++)
+            WriteU8(address + (uint)i, data[i]);
+    }
+
+    public void ZeroRange(uint address, uint length)
+    {
+        for (uint i = 0; i < length; i++)
+            WriteU8(address + i, 0);
+    }
+}
