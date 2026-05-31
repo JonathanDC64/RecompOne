@@ -1,4 +1,5 @@
 using RecompOne.Runtime.Context;
+using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Memory;
 
 namespace RecompOne.Runtime.Sdk;
@@ -21,6 +22,7 @@ public static class LibCd
         ReadS = 0x1B;
 
     const int Complete = 0x02;
+    const int DataReady = 0x01;
     const byte ModeSize1 = 0x20, ModeSize0 = 0x10;
 
     static byte _status;
@@ -33,6 +35,8 @@ public static class LibCd
     static uint _cbSync;
     static uint _cbReady;
     static uint _cbData;
+
+    static bool _readActive;
 
     static readonly bool[] NeedsLoc = BuildNeedsLoc();
 
@@ -80,6 +84,7 @@ public static class LibCd
         _mode = (byte)c.A2;
         int lba = PosToInt(_pos);
         int size = SectorSize(_mode);
+        Dispatcher.LoadByLba(lba);
         Log.Sdk($"CdRead sectors={sectors} buf=0x{buf:X8} mode=0x{_mode:X2} lba={lba} size={size}");
 
         for (int i = 0; i < sectors; i++)
@@ -94,6 +99,29 @@ public static class LibCd
 
     internal static int CurrentLba => PosToInt(_pos);
     internal static double SectorsPerSecond => (_mode & 0x80) != 0 ? 150.0 : 75.0; //cd pacer
+
+    internal static void Tick()
+    {
+        if (!_readActive || _cbData == 0) return;
+        var c = Runtime.Cpu;
+        var m = Runtime.Mem;
+        if (c == null || m == null) return;
+
+        var snap = c.Snapshot();
+        while (_cbData != 0)
+        {
+            _lastIntr = DataReady;
+            if (_cbReady != 0) { c.A0 = DataReady; c.A1 = 0; Dispatcher.Call(c, m, _cbReady); }
+            AdvancePos(1);
+            if (_cbData != 0) { c.A0 = DataReady; c.A1 = 0; Dispatcher.Call(c, m, _cbData); }
+        }
+        c.Restore(snap);
+    }
+
+    static void AdvancePos(int n)
+    {
+        IntToPos(PosToInt(_pos) + n, out _pos[0], out _pos[1], out _pos[2]);
+    }
 
     public static void CdReadSync(CpuContext c, IMemory m)
     {
@@ -163,6 +191,7 @@ public static class LibCd
         _com = 0;
         _lastIntr = Complete;
         _cbSync = _cbReady = _cbData = 0;
+        _readActive = false;
         Array.Clear(_pos);
         Array.Clear(_lastResult);
     }
@@ -196,8 +225,14 @@ public static class LibCd
             case Setmode:
                 if (param != 0) _mode = m.ReadU8(param);
                 break;
-            case Nop: case Play: case ReadN: case ReadS:
-            case Stop: case Pause: case Init: case Mute:
+            case ReadN:
+                _readActive = true;
+                Dispatcher.LoadByLba(PosToInt(_pos));
+                break;
+            case ReadS: case Pause: case Stop:
+                _readActive = false;
+                break;
+            case Nop: case Play: case Init: case Mute:
             case Demute: case Setfilter: case SeekL: case SeekP:
                 break;
             default:

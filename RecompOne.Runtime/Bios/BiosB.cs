@@ -33,8 +33,10 @@ public static class BiosB
     
     static void PadRead(IMemory m)
     {
-        if (_padBuf != 0)
-            m.WriteU32(_padBuf, 0xFFFF0000u | Hardware.Controller.State);
+        if (_padBuf == 0) return;
+        ushort s = Hardware.Controller.State;
+        ushort swapped = (ushort)((s >> 8) | (s << 8));
+        m.WriteU32(_padBuf, 0xFFFF0000u | swapped);
     }
     public static void Dispatch(CpuContext c, IMemory m, uint fn)
     {
@@ -84,7 +86,7 @@ public static class BiosB
             case 0x32: BiosA.Dispatch(c, m, 0x00); break;
             case 0x33: BiosA.Dispatch(c, m, 0x01); break;
             case 0x34: BiosA.Dispatch(c, m, 0x02); break;
-            case 0x35: c.V0 = 0u; break;
+            case 0x35: BiosA.Dispatch(c, m, 0x03); break;
             case 0x36: BiosA.Dispatch(c, m, 0x04); break;
             case 0x37: BiosA.Dispatch(c, m, 0x05); break;
             case 0x38: BiosA.Dispatch(c, m, 0x06); break;
@@ -96,18 +98,18 @@ public static class BiosB
             case 0x3E: c.V0 = 0u; break;
             case 0x3F: Console.Write(Bios.ReadString(m, c.A0)); c.V0 = c.A0; break;
             case 0x40: c.V0 = 1u; break;
-            case 0x41: c.V0 = 0u; break;
-            case 0x42: c.V0 = 0u; break;
-            case 0x43: c.V0 = 0u; break;
+            case 0x41: c.V0 = BiosA.CardFormat(m, c.A0); break;
+            case 0x42: c.V0 = BiosA.FirstFile(m, c.A0, c.A1); break;
+            case 0x43: c.V0 = BiosA.NextFile(m, c.A0); break;
             case 0x44: c.V0 = 0u; break;
-            case 0x45: c.V0 = 0u; break;
+            case 0x45: c.V0 = BiosA.CardDelete(m, c.A0); break;
             case 0x46: c.V0 = 0u; break;
             case 0x47: c.V0 = GetFreeEvSlot(); break;
             case 0x48: c.V0 = 0xFFFFFFFFu; break;
             case 0x49: break;
-            case 0x4A: break;
-            case 0x4B: break;
-            case 0x4C: break;
+            case 0x4A: c.V0 = 1u; break;
+            case 0x4B: c.V0 = 1u; break;
+            case 0x4C: c.V0 = 1u; break;
             case 0x4D: break;
             case 0x4E: c.V0 = GetFreeEvSlot(); break;
             case 0x4F: c.V0 = 0xFFFFFFFFu; break;
@@ -119,7 +121,7 @@ public static class BiosB
             case 0x56: c.V0 = 0u; break;
             case 0x57: c.V0 = 0u; break;
             case 0x58: break;
-            case 0x59: c.V0 = 0u; break;
+            case 0x59: c.V0 = BiosA.TestDevice(m, c.A0); break;
             case 0x5B: c.V0 = 0u; break;
             case 0x5C: c.V0 = 0u; break;
             case 0x5D: break;

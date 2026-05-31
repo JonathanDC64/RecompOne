@@ -15,7 +15,6 @@ public static class LibEtc
         if (mode == 1) { c.V0 = 0; return; }
 
         Runtime.PresentFrame();
-        Runtime.DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
         _vcount++;
         c.V0 = 0;
     }

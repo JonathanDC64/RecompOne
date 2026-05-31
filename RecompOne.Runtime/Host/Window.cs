@@ -95,7 +95,7 @@ internal static class Window
 
         Controller.State = s;
     }
-
+    
     static void OnRender()
     {
         if (_gl == null) return;

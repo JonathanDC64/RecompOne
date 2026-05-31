@@ -1,6 +1,7 @@
 using RecompOne.Runtime.Cdrom;
 using RecompOne.Runtime.Context;
 using RecompOne.Runtime.Dispatch;
+using RecompOne.Runtime.Hardware;
 using RecompOne.Runtime.Memory;
 
 namespace RecompOne.Runtime.Bios;
@@ -16,7 +17,75 @@ public static class BiosA
     static CueFs? _fs;
     static CdController? _cd;
     static readonly Dictionary<uint, (string name, byte[] data, int offset)> _openFiles = new();
+    static readonly Dictionary<uint, (MemoryCard card, int[] chain, int size, int pos)> _cardFiles = new();
     static uint _nextHandle = 2u;
+
+    static List<(string name, int size)> _ff = new();
+    static int _ffIdx;
+
+    public static MemoryCard? CardFor(string path)
+    {
+        if (path.StartsWith("bu00:", StringComparison.OrdinalIgnoreCase)) return Runtime.CardA.Enabled ? Runtime.CardA : null;
+        if (path.StartsWith("bu10:", StringComparison.OrdinalIgnoreCase)) return Runtime.CardB.Enabled ? Runtime.CardB : null;
+        return null;
+    }
+    static string CardName(string path) { int i = path.IndexOf(':'); return i >= 0 ? path[(i + 1)..] : path; }
+
+    static void WriteDirEntry(IMemory m, uint ptr, string name, int size)
+    {
+        for (int i = 0; i < 20; i++) m.WriteU8(ptr + (uint)i, i < name.Length ? (byte)name[i] : (byte)0);
+        m.WriteU32(ptr + 0x14u, 0x50u);
+        m.WriteU32(ptr + 0x18u, (uint)size);
+        m.WriteU32(ptr + 0x1Cu, 0u);
+        m.WriteU32(ptr + 0x20u, 0u);
+        m.WriteU32(ptr + 0x24u, 0u);
+    }
+
+    public static uint FirstFile(IMemory m, uint wildPtr, uint dirPtr)
+    {
+        string wild = Bios.ReadString(m, wildPtr);
+        var card = CardFor(wild);
+        if (card == null) return 0u;
+        _ff = card.Match(CardName(wild));
+        _ffIdx = 0;
+        return NextFileEntry(m, dirPtr);
+    }
+
+    public static uint NextFile(IMemory m, uint dirPtr) => NextFileEntry(m, dirPtr);
+
+    static uint NextFileEntry(IMemory m, uint dirPtr)
+    {
+        if (_ffIdx >= _ff.Count) return 0u;
+        var e = _ff[_ffIdx++];
+        WriteDirEntry(m, dirPtr, e.name, e.size);
+        return dirPtr;
+    }
+
+    public static uint CardDelete(IMemory m, uint pathPtr)
+    {
+        string path = Bios.ReadString(m, pathPtr);
+        var card = CardFor(path);
+        if (card == null) return 0u;
+        card.Delete(CardName(path));
+        return 1u;
+    }
+
+    public static uint CardFormat(IMemory m, uint pathPtr)
+    {
+        var card = CardFor(Bios.ReadString(m, pathPtr));
+        if (card == null) { BiosB.DeliverEvent(0xF0000011u, 0x8000u); return 0u; }
+        card.Format();
+        BiosB.DeliverEvent(0xF0000011u, 0x0004u);
+        return 1u;
+    }
+
+    public static uint TestDevice(IMemory m, uint pathPtr) => CardFor(Bios.ReadString(m, pathPtr)) != null ? 1u : 0u;
+
+    static void CardEvent(uint port)
+    {
+        var card = (port & 0x10) != 0 ? Runtime.CardB : Runtime.CardA;
+        BiosB.DeliverEvent(0xF4000001u, card.Enabled ? 0x0004u : 0x8000u);
+    }
 
     static uint _confNumEvCB = 16, _confNumTCB = 4, _confStack = 0;
     public static uint LastErrno = 0;
@@ -32,8 +101,21 @@ public static class BiosA
         {
             case 0x00:
             {
-                if (_fs == null) { c.V0 = 0xFFFFFFFFu; LastErrno = 13; break; }
                 string rawPath = Bios.ReadString(m, c.A0);
+                var card = CardFor(rawPath);
+                if (card != null)
+                {
+                    string cn = CardName(rawPath);
+                    int first = card.Find(cn);
+                    if (first == 0 && (c.A1 & 0x200u) != 0) first = card.Create(cn, (int)(c.A1 >> 16));
+                    if (first == 0) { c.V0 = 0xFFFFFFFFu; LastErrno = 2; break; }
+                    uint cfd = _nextHandle++;
+                    _cardFiles[cfd] = (card, card.Chain(first), card.FileSize(first), 0);
+                    c.V0 = cfd; LastErrno = 0;
+                    break;
+                }
+                if (_fs == null) { c.V0 = 0xFFFFFFFFu; LastErrno = 13; break; }
+                if (Runtime.Mode == RunMode.Retail && rawPath.StartsWith("sim:", StringComparison.OrdinalIgnoreCase)) { c.V0 = 0xFFFFFFFFu; LastErrno = 2; break; }
                 string fileName = CdUtils.ExtractFileName(rawPath);
                 try
                 {
@@ -51,6 +133,13 @@ public static class BiosA
             case 0x01:
             {
                 uint fd = c.A0;
+                if (_cardFiles.TryGetValue(fd, out var cse))
+                {
+                    int no = (int)c.A2 switch { 0 => (int)c.A1, 1 => cse.pos + (int)c.A1, 2 => cse.size + (int)c.A1, _ => cse.pos };
+                    no = Math.Max(0, Math.Min(no, cse.size));
+                    _cardFiles[fd] = (cse.card, cse.chain, cse.size, no);
+                    c.V0 = (uint)no; LastErrno = 0; break;
+                }
                 if (!_openFiles.TryGetValue(fd, out var se)) { c.V0 = 0xFFFFFFFFu; LastErrno = 9; break; }
                 int newOff = (int)c.A2 switch
                 {
@@ -68,6 +157,14 @@ public static class BiosA
             case 0x02:
             {
                 uint fd = c.A0;
+                if (_cardFiles.TryGetValue(fd, out var cre))
+                {
+                    int n = (int)Math.Min(c.A2, (uint)(cre.size - cre.pos));
+                    for (int i = 0; i < n; i++) m.WriteU8(c.A1 + (uint)i, cre.card.ReadByte(cre.chain, cre.pos + i));
+                    _cardFiles[fd] = (cre.card, cre.chain, cre.size, cre.pos + n);
+                    BiosB.DeliverEvent(0xF4000001u, 0x0004u);
+                    c.V0 = (uint)n; LastErrno = 0; break;
+                }
                 if (!_openFiles.TryGetValue(fd, out var re)) { c.V0 = 0xFFFFFFFFu; LastErrno = 9; break; }
                 int count = (int)Math.Min(c.A2, (uint)(re.data.Length - re.offset));
                 for (int i = 0; i < count; i++)
@@ -80,10 +177,24 @@ public static class BiosA
                     Dispatcher.TryLoad(re.name);
                 break;
             }
-            case 0x03: c.V0 = 0xFFFFFFFFu; LastErrno = 9; break;
+            case 0x03:
+            {
+                uint fd = c.A0;
+                if (_cardFiles.TryGetValue(fd, out var cwe))
+                {
+                    int n = (int)Math.Min(c.A2, (uint)(cwe.size - cwe.pos));
+                    for (int i = 0; i < n; i++) cwe.card.WriteByte(cwe.chain, cwe.pos + i, m.ReadU8(c.A1 + (uint)i));
+                    cwe.card.Flush();
+                    _cardFiles[fd] = (cwe.card, cwe.chain, cwe.size, cwe.pos + n);
+                    BiosB.DeliverEvent(0xF4000001u, 0x0004u);
+                    c.V0 = (uint)n; LastErrno = 0; break;
+                }
+                c.V0 = 0xFFFFFFFFu; LastErrno = 9; break;
+            }
             case 0x04:
             {
                 _openFiles.Remove(c.A0);
+                _cardFiles.Remove(c.A0);
                 c.V0 = c.A0;
                 LastErrno = 0;
                 break;
@@ -304,8 +415,10 @@ public static class BiosA
                 break;
             }
             case 0xA6: c.V0 = _cd != null ? _cd.DriveStatusByte() : 0x02u; break;
+            case 0xAB: CardEvent(c.A0); c.V0 = 1u; break;
+            case 0xAC: CardEvent(c.A0); c.V0 = 1u; break;
             case 0xA7: case 0xA8: case 0xA9: case 0xAA:
-            case 0xAB: case 0xAC: case 0xAD: case 0xAE: case 0xAF: break;
+            case 0xAD: case 0xAE: case 0xAF: break;
             case 0xB4:
                 c.V0 = c.A0 switch
                 {

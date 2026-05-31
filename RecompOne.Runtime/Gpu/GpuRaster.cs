@@ -58,6 +58,7 @@ public sealed partial class Gpu
     {
         long area = (long)(b.X - a.X) * (c.Y - a.Y) - (long)(b.Y - a.Y) * (c.X - a.X);
         if (area == 0) return;
+        if (area < 0) { (b, c) = (c, b); area = -area; }
 
         int minX = Math.Max(_drawAreaLeft, Math.Min(a.X, Math.Min(b.X, c.X)));
         int maxX = Math.Min(_drawAreaRight, Math.Max(a.X, Math.Max(b.X, c.X)));
@@ -65,38 +66,46 @@ public sealed partial class Gpu
         int maxY = Math.Min(_drawAreaBottom, Math.Max(a.Y, Math.Max(b.Y, c.Y)));
         if (minX > maxX || minY > maxY) return;
 
-        double inv = 1.0 / area;
+        int bias0 = IsTopLeft(b, c) ? 0 : -1;
+        int bias1 = IsTopLeft(c, a) ? 0 : -1;
+        int bias2 = IsTopLeft(a, b) ? 0 : -1;
+        bool ditherTex = _dither && !raw;
+
         for (int y = minY; y <= maxY; y++)
             for (int x = minX; x <= maxX; x++)
             {
-                long w0 = (long)(b.X - x) * (c.Y - y) - (long)(b.Y - y) * (c.X - x);
-                long w1 = (long)(c.X - x) * (a.Y - y) - (long)(c.Y - y) * (a.X - x);
-                long w2 = area - w0 - w1;
-                if (area > 0 ? (w0 < 0 || w1 < 0 || w2 < 0) : (w0 > 0 || w1 > 0 || w2 > 0)) continue;
-
-                double l0 = w0 * inv, l1 = w1 * inv, l2 = w2 * inv;
+                long w0 = (long)(c.X - b.X) * (y - b.Y) - (long)(c.Y - b.Y) * (x - b.X);
+                long w1 = (long)(a.X - c.X) * (y - c.Y) - (long)(a.Y - c.Y) * (x - c.X);
+                long w2 = (long)(b.X - a.X) * (y - a.Y) - (long)(b.Y - a.Y) * (x - a.X);
+                if (w0 + bias0 < 0 || w1 + bias1 < 0 || w2 + bias2 < 0) continue;
 
                 int r, g, bl;
                 if (gouraud)
                 {
-                    r = (int)(l0 * a.R + l1 * b.R + l2 * c.R);
-                    g = (int)(l0 * a.G + l1 * b.G + l2 * c.G);
-                    bl = (int)(l0 * a.B + l1 * b.B + l2 * c.B);
+                    r = (int)((w0 * a.R + w1 * b.R + w2 * c.R) / area);
+                    g = (int)((w0 * a.G + w1 * b.G + w2 * c.G) / area);
+                    bl = (int)((w0 * a.B + w1 * b.B + w2 * c.B) / area);
                 }
                 else { r = a.R; g = a.G; bl = a.B; }
 
                 if (tex)
                 {
-                    int u = (int)(l0 * a.U + l1 * b.U + l2 * c.U);
-                    int tv = (int)(l0 * a.V + l1 * b.V + l2 * c.V);
+                    int u = (int)((w0 * a.U + w1 * b.U + w2 * c.U) / area);
+                    int tv = (int)((w0 * a.V + w1 * b.V + w2 * c.V) / area);
                     ushort texel = FetchTexel(u, tv, clut);
                     if (texel == 0) continue;
                     int tr = (texel & 0x1F) << 3, tg = ((texel >> 5) & 0x1F) << 3, tb = ((texel >> 10) & 0x1F) << 3;
                     if (!raw) { tr = tr * r >> 7; tg = tg * g >> 7; tb = tb * bl >> 7; }
-                    Plot(x, y, tr, tg, tb, semi && (texel & 0x8000) != 0, false);
+                    Plot(x, y, tr, tg, tb, semi && (texel & 0x8000) != 0, ditherTex);
                 }
                 else Plot(x, y, r, g, bl, semi, _dither);
             }
+    }
+
+    static bool IsTopLeft(in Vert p0, in Vert p1)
+    {
+        int dy = p1.Y - p0.Y, dx = p1.X - p0.X;
+        return dy < 0 || (dy == 0 && dx > 0);
     }
 
     void DrawRectangle()
@@ -243,7 +252,7 @@ public sealed partial class Gpu
             r = Clamp255(r + d); g = Clamp255(g + d); b = Clamp255(b + d);
         }
 
-        int fr = r >> 3, fg = g >> 3, fb = b >> 3;
+        int fr = Math.Min(31, r >> 3), fg = Math.Min(31, g >> 3), fb = Math.Min(31, b >> 3);
 
         if (semi)
         {

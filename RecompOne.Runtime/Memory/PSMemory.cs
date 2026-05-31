@@ -4,7 +4,7 @@ namespace RecompOne.Runtime.Memory;
 
 public sealed class PSMemory : IMemory
 {
-    private readonly byte[] _ram = new byte[MemoryMap.RamSize];
+    private readonly byte[] _ram = new byte[Runtime.Mode == RunMode.Devkit ? MemoryMap.DevkitRamSize : MemoryMap.RetailRamSize];
     private readonly byte[] _scratchpad = new byte[MemoryMap.ScratchpadSize];
     private readonly byte[] _hwregs = new byte[MemoryMap.HwRegsSize];
 
@@ -43,8 +43,8 @@ public sealed class PSMemory : IMemory
     {
         uint phys = MemoryMap.ToPhysical(address);
 
-        if (phys < MemoryMap.RamSize)
-            return _ram.AsSpan((int)(phys % MemoryMap.RamSize), size);
+        if (phys < MemoryMap.RamWindow)
+            return _ram.AsSpan((int)(phys % (uint)_ram.Length), size);
 
         if (phys >= MemoryMap.ScratchpadBase && phys < MemoryMap.ScratchpadBase + MemoryMap.ScratchpadSize)
             return _scratchpad.AsSpan((int)(phys - MemoryMap.ScratchpadBase), size);

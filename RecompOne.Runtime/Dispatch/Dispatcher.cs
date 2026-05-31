@@ -7,10 +7,20 @@ namespace RecompOne.Runtime.Dispatch;
 public static class Dispatcher
 {
     static readonly Dictionary<string, IOverlay> _registry = new(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<int, string> _lbaToName = [];
     static readonly List<string> _active = [];
     static readonly Dictionary<uint, Action<CpuContext, IMemory>> _funcMap = [];
 
-    public static void Register(string name, IOverlay overlay) => _registry[name] = overlay;
+    public static void Register(string name, IOverlay overlay)
+    {
+        _registry[name] = overlay;
+        if (overlay.LbaStart >= 0) _lbaToName[overlay.LbaStart] = name;
+    }
+
+    public static void LoadByLba(int lba)
+    {
+        if (_lbaToName.TryGetValue(lba, out var name)) Load(name);
+    }
 
     public static void Load(string name)
     {
@@ -44,8 +54,9 @@ public static class Dispatcher
     public static void Call(CpuContext c, IMemory m, uint addr)
     {
         if (BiosKernel.TryDispatch(c, m, addr)) return;
-        if (_funcMap.TryGetValue(addr, out var fn)) fn(c, m);
-        else throw new InvalidOperationException($"unmapped call: 0x{addr:X8}");
+        if (!_funcMap.TryGetValue(addr, out var fn))
+            throw new InvalidOperationException($"unmapped call: 0x{addr:X8}");
+        fn(c, m);
     }
 
     static void Rebuild()

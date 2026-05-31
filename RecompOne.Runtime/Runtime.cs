@@ -4,12 +4,21 @@ using RecompOne.Runtime.Memory;
 
 namespace RecompOne.Runtime;
 
+public enum RunMode { Retail, Devkit }
+
 public static class Runtime
 {
     public static CpuContext? Cpu { get; private set; }
     public static IMemory? Mem { get; private set; }
     public static Gpu? Gpu;
     public static Cdrom.CdController? Cd;
+
+    public static RunMode Mode { get; private set; } = RunMode.Retail;
+    public static void SetMode(RunMode mode) => Mode = mode; //devkit vs retail, devkits reads from sim and has more ram
+
+    //TODO add game config to control wich card to use, rn hardcoded card a being used an b disabled
+    public static Hardware.MemoryCard CardA = new("carda.sav") { Enabled = true };
+    public static Hardware.MemoryCard CardB = new("cardb.sav") { Enabled = false };
 
     public static void Initialize(string title)
     {
@@ -27,6 +36,8 @@ public static class Runtime
     {
         Window.Present(Gpu);
         FrameClock.Throttle();
+        Sdk.LibCd.Tick();
+        DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
     }
 
     public static void DispatchIrq(int irq)

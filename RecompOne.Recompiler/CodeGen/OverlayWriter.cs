@@ -11,7 +11,7 @@ namespace RecompOne.Recompiler.CodeGen;
 
 public static class OverlayWriter
 {
-    record OverlayResult(string Name, List<MipsFunction> Functions);
+    record OverlayResult(string Name, List<MipsFunction> Functions, int LbaStart);
 
     public static void Write(RecompOneConfig config, CueFs fs, string outDir)
     {
@@ -69,7 +69,7 @@ public static class OverlayWriter
             }
 
             ApplyStubsAndIgnored(funcs, config.Stubs, config.Ignored);
-            overlayResults.Add(new OverlayResult("main", funcs));
+            overlayResults.Add(new OverlayResult("main", funcs, -1));
         }
 
         foreach (var overlayConfig in config.Overlays)
@@ -114,8 +114,10 @@ public static class OverlayWriter
 
             AnalyzeJumpTables(funcs, elfInfo, overlayConfig.Name);
 
+            int lba = fs.Locate(overlayConfig.Name + ".BIN", out int l, out _) ? l : -1;
+
             ApplyStubsAndIgnored(funcs, overlayConfig.Stubs.Concat(config.Stubs), overlayConfig.Ignored.Concat(config.Ignored));
-            overlayResults.Add(new OverlayResult(overlayConfig.Name, funcs));
+            overlayResults.Add(new OverlayResult(overlayConfig.Name, funcs, lba));
         }
 
         var allFuncs = overlayResults.SelectMany(o => o.Functions).ToList();
@@ -142,7 +144,7 @@ public static class OverlayWriter
         foreach (var result in overlayResults)
         {
             Console.WriteLine($"[Recompiler] emiting {result.Name}.cs ({result.Functions.Count} functions)");
-            EmitOverlayFile(result.Name, result.Functions, className, knownFuncs, config.Debug, outDir);
+            EmitOverlayFile(result.Name, result.Functions, className, knownFuncs, config.Debug, result.LbaStart, outDir);
         }
 
         Console.WriteLine("[Recompiler] Emitting Entry.cs");
@@ -152,7 +154,7 @@ public static class OverlayWriter
         Console.WriteLine("[Recompiler] finished "); //maybe add time it took
     }
 
-    static void EmitOverlayFile(string overlayName, List<MipsFunction> funcs, string className, Dictionary<uint, string> knownFuncs, bool debug, string outDir)
+    static void EmitOverlayFile(string overlayName, List<MipsFunction> funcs, string className, Dictionary<uint, string> knownFuncs, bool debug, int lbaStart, string outDir)
     {
         var sb = new StringBuilder();
         sb.AppendLine("using RecompOne.Runtime.Context;");
@@ -184,6 +186,7 @@ public static class OverlayWriter
         sb.AppendLine($"public sealed class {DispatchTableName(overlayName)} : IOverlay");
         sb.AppendLine("{");
         sb.AppendLine($"    public string Name => \"{overlayName}\";");
+        sb.AppendLine($"    public int LbaStart => {lbaStart};");
         sb.AppendLine("    public IReadOnlyDictionary<uint, Action<CpuContext, IMemory>> Functions { get; } =");
         sb.AppendLine("        new Dictionary<uint, Action<CpuContext, IMemory>>");
         sb.AppendLine("        {");

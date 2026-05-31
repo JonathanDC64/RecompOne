@@ -4,7 +4,9 @@ namespace RecompOne.Runtime.Memory;
 public static class MemoryMap
 {
     public const uint RamBase = 0x00000000;
-    public const uint RamSize = 0x00800000; // 8MB threates this as an dev env for now 
+    public const uint RamWindow = 0x00800000;
+    public const uint RetailRamSize = 0x00200000;
+    public const uint DevkitRamSize = 0x00800000;
 
     public const uint ScratchpadBase = 0x1F800000;
     public const uint ScratchpadSize = 0x00000400;
