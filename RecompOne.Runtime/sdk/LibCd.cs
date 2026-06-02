@@ -37,6 +37,9 @@ public static class LibCd
     static uint _cbData;
 
     static bool _readActive;
+    static bool _xaActive;
+    static byte _filterFile;
+    static byte _filterChannel;
 
     static readonly bool[] NeedsLoc = BuildNeedsLoc();
 
@@ -102,6 +105,14 @@ public static class LibCd
 
     internal static void Tick()
     {
+        bool xaMode = (_mode & 0x40) != 0;
+
+        if (_xaActive || (_readActive && xaMode && _cbData == 0))
+        {
+            PumpXa();
+            return;
+        }
+
         if (!_readActive || _cbData == 0) return;
         var c = Runtime.Cpu;
         var m = Runtime.Mem;
@@ -116,6 +127,27 @@ public static class LibCd
             if (_cbData != 0) { c.A0 = DataReady; c.A1 = 0; Dispatcher.Call(c, m, _cbData); }
         }
         c.Restore(snap);
+    }
+
+    static void PumpXa()
+    {
+        if (Runtime.Cd == null) return;
+        const int MinBuffer = 2016; // 1 stereo XA sector worth of samples
+        const int MaxScan = 32;
+        bool useFilter = (_mode & 0x08) != 0;
+        int scanned = 0;
+
+        while (XaAudio.BufferedSamples < MinBuffer && scanned < MaxScan)
+        {
+            int lba = PosToInt(_pos);
+            if (lba < 0) break;
+            var sec = Runtime.Cd.ReadSectorData(lba, 2336);
+            AdvancePos(1);
+            scanned++;
+            if ((sec[2] & 0x04) == 0) continue; // not an audio sector
+            if (useFilter && (sec[0] != _filterFile || sec[1] != _filterChannel)) continue;
+            XaAudio.DecodeSector(sec, 8, sec[3]);
+        }
     }
 
     static void AdvancePos(int n)
@@ -192,6 +224,8 @@ public static class LibCd
         _lastIntr = Complete;
         _cbSync = _cbReady = _cbData = 0;
         _readActive = false;
+        _xaActive = false;
+        _filterFile = _filterChannel = 0;
         Array.Clear(_pos);
         Array.Clear(_lastResult);
     }
@@ -225,15 +259,23 @@ public static class LibCd
             case Setmode:
                 if (param != 0) _mode = m.ReadU8(param);
                 break;
+            case Setfilter:
+                if (param != 0) { _filterFile = m.ReadU8(param); _filterChannel = m.ReadU8(param + 1); }
+                break;
             case ReadN:
                 _readActive = true;
                 Dispatcher.LoadByLba(PosToInt(_pos));
                 break;
-            case ReadS: case Pause: case Stop:
+            case ReadS:
+                _xaActive = true;
                 _readActive = false;
                 break;
+            case Pause: case Stop:
+                _readActive = false;
+                _xaActive = false;
+                break;
             case Nop: case Play: case Init: case Mute:
-            case Demute: case Setfilter: case SeekL: case SeekP:
+            case Demute: case SeekL: case SeekP:
                 break;
             default:
                 break;

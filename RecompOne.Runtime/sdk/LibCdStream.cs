@@ -49,6 +49,7 @@ public static class LibCdStream
         _active = true;
         _readIdx = 0;
         _streamLba = -1;
+        XaAudio.Reset();
         Log.Sdk("StSetStream");
     }
 
@@ -63,33 +64,35 @@ public static class LibCdStream
         int guard = 0;
         while (true)
         {
-            first = Runtime.Cd.ReadSectorData(_streamLba, 2048);
-            if (Read16(first, 0) == VideoMagic && Read16(first, 4) == 0) break;
+            first = Runtime.Cd.ReadSectorData(_streamLba, 2336);
+            if ((first[2] & 0x04) != 0) { XaAudio.DecodeSector(first, 8, first[3]); _streamLba++; if (++guard > 8192) { c.V0 = 1; return; } continue; }
+            if (Read16(first, 8) == VideoMagic && Read16(first, 12) == 0) break;
             _streamLba++;
             if (++guard > 8192) { Log.Sdk($"StGetNext there no frame start near lba={_streamLba}"); c.V0 = 1; return; }
         }
 
-        int n = Read16(first, 6);
+        int n = Read16(first, 14);
         if (n <= 0 || n > _slots) { c.V0 = 1; return; }
-        
+
         double delivered = _clock.Elapsed.TotalSeconds * LibCd.SectorsPerSecond; //cd pacer
         int needed = (_streamLba - _streamStartLba) + n;
         if (needed > delivered) { c.V0 = 1; return; }
 
-        Log.Sdk($"StGetNext lba={_streamLba} chunks={n} frame#={Read32(first, 8)} readIdx={_readIdx} delivered={delivered:F0}");
+        Log.Sdk($"StGetNext lba={_streamLba} chunks={n} frame#={Read32(first, 16)} readIdx={_readIdx} delivered={delivered:F0}");
         if (_readIdx + n > _slots) _readIdx = 0;
-        
+
         int collected = 0;
         uint lba = (uint)_streamLba;
         while (collected < n)
         {
-            byte[] sec = Runtime.Cd.ReadSectorData((int)lba, 2048);
+            byte[] sec = Runtime.Cd.ReadSectorData((int)lba, 2336);
             lba++;
-            if (Read16(sec, 0) != VideoMagic) continue;
+            if ((sec[2] & 0x04) != 0) { XaAudio.DecodeSector(sec, 8, sec[3]); continue; }
+            if (Read16(sec, 8) != VideoMagic) continue;
             uint hdr = _statusBase + (uint)((_readIdx + collected) * HeaderSize);
             uint dat = _dataBase + (uint)((_readIdx + collected) * SlotData);
-            for (int j = 0; j < HeaderSize; j++) m.WriteU8(hdr + (uint)j, sec[j]);
-            for (int j = 0; j < SlotData; j++) m.WriteU8(dat + (uint)j, sec[HeaderSize + j]);
+            for (int j = 0; j < HeaderSize; j++) m.WriteU8(hdr + (uint)j, sec[8 + j]);
+            for (int j = 0; j < SlotData; j++) m.WriteU8(dat + (uint)j, sec[8 + HeaderSize + j]);
             collected++;
         }
         _streamLba = (int)lba;
@@ -98,7 +101,7 @@ public static class LibCdStream
         uint hdrPtr = _statusBase + (uint)(_readIdx * HeaderSize);
         m.WriteU32(c.A0, dataPtr);
         m.WriteU32(c.A1, hdrPtr);
-        Log.Sdk($"StGetNext ready data=0x{dataPtr:X8} hdr=0x{hdrPtr:X8} w={Read16(first, 0x10)} h={Read16(first, 0x12)}");
+        Log.Sdk($"StGetNext ready data=0x{dataPtr:X8} hdr=0x{hdrPtr:X8} w={Read16(first, 0x18)} h={Read16(first, 0x1A)}");
 
         _readIdx += n;
         c.V0 = 0;

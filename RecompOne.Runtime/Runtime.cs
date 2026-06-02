@@ -11,6 +11,7 @@ public static class Runtime
     public static CpuContext? Cpu { get; private set; }
     public static IMemory? Mem { get; private set; }
     public static Gpu? Gpu;
+    public static Spu? Spu;
     public static Cdrom.CdController? Cd;
 
     public static RunMode Mode { get; private set; } = RunMode.Retail;
@@ -35,6 +36,7 @@ public static class Runtime
     public static void PresentFrame()
     {
         Window.Present(Gpu);
+        Audio.Present(Spu);
         FrameClock.Throttle();
         Sdk.LibCd.Tick();
         DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented

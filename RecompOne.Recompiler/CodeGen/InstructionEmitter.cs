@@ -108,13 +108,13 @@ public static class InstructionEmitter
         {
             uint cop2rs = (i.Word >> 21) & 0x1F;
             if (cop2rs == 8) return "";
-            if (((i.Word >> 25) & 1) == 1) return $"Gte.Execute(c, m, 0x{i.Word:X8}u);";
+            if (((i.Word >> 25) & 1) == 1) return $"RecompOne.Runtime.Gte.Execute(0x{i.Word:X8}u);";
             return cop2rs switch
             {
-                0 => rt == 0 ? "" : $"{RT} = Gte.Read(c, {rd});",
-                2 => rt == 0 ? "" : $"{RT} = Gte.ReadControl(c, {rd});",
-                4 => $"Gte.Write(c, {rd}, {RT});",
-                6 => $"Gte.WriteControl(c, {rd}, {RT});",
+                0 => rt == 0 ? "" : $"{RT} = RecompOne.Runtime.Gte.Read({rd});",
+                2 => rt == 0 ? "" : $"{RT} = RecompOne.Runtime.Gte.ReadControl({rd});",
+                4 => $"RecompOne.Runtime.Gte.Write({rd}, {RT});",
+                6 => $"RecompOne.Runtime.Gte.WriteControl({rd}, {RT});",
                 _ => $"/* COP2 rs={cop2rs} */"
             };
         }
@@ -142,8 +142,8 @@ public static class InstructionEmitter
             42 => $"m.WriteWordLeft({Addr(rs, imm)}, {RT});",
             43 => $"m.WriteU32({Addr(rs, imm)}, {RT});",
             46 => $"m.WriteWordRight({Addr(rs, imm)}, {RT});",
-            50 => $"Gte.LoadWord(c, {rt}, m.ReadU32({Addr(rs, imm)}));",
-            58 => $"m.WriteU32({Addr(rs, imm)}, Gte.StoreWord(c, {rt}));",
+            50 => $"RecompOne.Runtime.Gte.LoadWord({rt}, m.ReadU32({Addr(rs, imm)}));",
+            58 => $"m.WriteU32({Addr(rs, imm)}, RecompOne.Runtime.Gte.StoreWord({rt}));",
             _ =>  UnknownInstr(i, $"op=0x{op:X2}")
         };
     }
@@ -176,8 +176,7 @@ public static class InstructionEmitter
         void Ds()
         {
             if (ds == null) return;
-            if (ctx.Labels.Contains(ds.Vram))
-                sb.AppendLine($"        L{ds.Vram:X8}: ;");
+            //fixes delay slot as branch target bug
             string line = EmitSingle(ds);
             if (!string.IsNullOrEmpty(line)) sb.AppendLine($"{indent}{line}");
         }
@@ -305,7 +304,7 @@ public static class InstructionEmitter
         if (op == 18 && ((ctrl.Word >> 21) & 0x1F) == 8)
         {
             uint target = ctrl.BranchTarget;
-            string cond = rt == 1 ? "Gte.GetCondition(c)" : "!Gte.GetCondition(c)";
+            string cond = rt == 1 ? "RecompOne.Runtime.Gte.GetCondition()" : "!RecompOne.Runtime.Gte.GetCondition()";
             Conditional(cond, target);
             return;
         }

@@ -11,9 +11,16 @@ public static class FunctionEmitter
         var sb = new StringBuilder();
         var instrs = func.Instructions;
         
+        //a delay slot of an unconditional transfer is emitted only inline (before the
+        // jump) and skipped here but  for the edge case where that same instruction is also a branch target it needs to
+        // also be emitted at its ""natural(?)"" position (and the label too) so jumps to it need to be into the following
+        //  instructions instead of into the preceding jump in that case it shouldnt be skiped, otherwise it will be emmited in the wrong location and cause crashes
+        // on the functions with this edge case
         var dsIdx = new HashSet<int>();
         for (int i = 0; i < instrs.Length - 1; i++)
-            if (instrs[i].HasDelaySlot && InstructionEmitter.SkipDelaySlot(instrs[i])) dsIdx.Add(i + 1);
+            if (instrs[i].HasDelaySlot && InstructionEmitter.SkipDelaySlot(instrs[i])
+                && !ctx.Labels.Contains(instrs[i + 1].Vram))
+                dsIdx.Add(i + 1);
 
         string name = func.EmittedName;
         const string ind = "        ";

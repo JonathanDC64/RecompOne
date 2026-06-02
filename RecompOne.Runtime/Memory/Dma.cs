@@ -90,6 +90,12 @@ public sealed class Dma
             for (uint i = 0; i < words; i++)
                 _gpu.WriteGp0(_mem.ReadU32(madr + i * 4u));
         }
+        else
+        {
+            uint words = WordCount(bcr);
+            for (uint i = 0; i < words; i++)
+                _mem.WriteU32(madr + i * 4u, _gpu.ReadData());
+        }
     }
 
     void TransferSpu(uint madr, uint bcr, uint chcr)

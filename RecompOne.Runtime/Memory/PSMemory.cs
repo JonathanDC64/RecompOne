@@ -18,6 +18,7 @@ public sealed class PSMemory : IMemory
     {
         _dma = new Dma(this, _gpu, _spu, _mdec, () => Runtime.DispatchIrq(3));
         Runtime.Gpu = _gpu;
+        Runtime.Spu = _spu;
     }
 
     public void SetCd(CdController cd) { _cd = cd; _dma.SetCd(cd); }

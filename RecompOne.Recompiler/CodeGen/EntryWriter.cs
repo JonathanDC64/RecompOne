@@ -53,18 +53,6 @@ public static class EntryWriter
         stubs.AppendLine("    public static void Syscall(CpuContext c, IMemory m) { }");
         stubs.AppendLine("    public static void Break(CpuContext c, IMemory m) { }");
         stubs.AppendLine("}");
-        stubs.AppendLine();
-        stubs.AppendLine("public static class Gte");
-        stubs.AppendLine("{");
-        stubs.AppendLine("    public static void Execute(CpuContext c, IMemory m, uint cmd) { }");
-        stubs.AppendLine("    public static uint Read(CpuContext c, int reg) => 0u;");
-        stubs.AppendLine("    public static uint ReadControl(CpuContext c, int reg) => 0u;");
-        stubs.AppendLine("    public static void Write(CpuContext c, int reg, uint val) { }");
-        stubs.AppendLine("    public static void WriteControl(CpuContext c, int reg, uint val) { }");
-        stubs.AppendLine("    public static void LoadWord(CpuContext c, int reg, uint val) { }");
-        stubs.AppendLine("    public static uint StoreWord(CpuContext c, int reg) => 0u;");
-        stubs.AppendLine("    public static bool GetCondition(CpuContext c) => false;");
-        stubs.AppendLine("}");
 
         var program = new StringBuilder();
         program.AppendLine("using RecompOne.Runtime.Memory;");

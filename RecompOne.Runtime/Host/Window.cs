@@ -11,6 +11,7 @@ internal static class Window
     static IWindow? _window;
     static GL? _gl;
     static bool _headless;
+    public static bool DebugRender = false;
     static Gpu? _gpu;
     static IInputContext? _input;
     static IKeyboard? _keyboard;
@@ -102,23 +103,42 @@ internal static class Window
         _gl.Clear((uint)ClearBufferMask.ColorBufferBit);
 
         var gpu = _gpu;
-        if (gpu == null || !gpu.DisplayEnabled) return;
+        if (gpu == null) return;
 
+        if (DebugRender)
+        {
+            const int dw = Gpu.VramWidth, dh = Gpu.VramHeight;
+            int needed = dw * dh * 3;
+            if (_rgb.Length < needed) _rgb = new byte[needed];
+            ConvertVramFull(gpu);
+
+            _gl.BindTexture(TextureTarget.Texture2D, _tex);
+            _gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, (int)InternalFormat.Rgb, dw, dh, 0, PixelFormat.Rgb, PixelType.UnsignedByte, _rgb.AsSpan(0, needed));
+            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+            _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _tex, 0);
+            _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, 0);
+
+            var fb = _window!.FramebufferSize;
+            _gl.BlitFramebuffer(0, 0, dw, dh, 0, fb.Y, fb.X, 0, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+            return;
+        }
+
+        if (!gpu.DisplayEnabled) return;
         int w = gpu.DisplayWidth, h = gpu.DisplayHeight;
         if (w <= 0 || h <= 0) return;
 
-        int needed = w * h * 3;
-        if (_rgb.Length < needed) _rgb = new byte[needed];
+        int needed2 = w * h * 3;
+        if (_rgb.Length < needed2) _rgb = new byte[needed2];
         ConvertVram(gpu, w, h);
 
         _gl.BindTexture(TextureTarget.Texture2D, _tex);
-        _gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, (int)InternalFormat.Rgb, (uint)w, (uint)h, 0, PixelFormat.Rgb, PixelType.UnsignedByte, _rgb.AsSpan(0, needed));
+        _gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, (int)InternalFormat.Rgb, (uint)w, (uint)h, 0, PixelFormat.Rgb, PixelType.UnsignedByte, _rgb.AsSpan(0, needed2));
         _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
         _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _tex, 0);
         _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, 0);
 
-        var fb = _window!.FramebufferSize;
-        _gl.BlitFramebuffer(0, 0, w, h, 0, fb.Y, fb.X, 0, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+        var fb2 = _window!.FramebufferSize;
+        _gl.BlitFramebuffer(0, 0, w, h, 0, fb2.Y, fb2.X, 0, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
     }
 
     static void ConvertVram(Gpu gpu, int w, int h)
@@ -155,6 +175,20 @@ internal static class Window
                     _rgb[o++] = (byte)(((px >> 10) & 0x1F) << 3);
                 }
             }
+        }
+    }
+
+    static void ConvertVramFull(Gpu gpu)
+    {
+        var vram = gpu.Vram;
+        int o = 0;
+        for (int y = 0; y < Gpu.VramHeight; y++)
+        for (int x = 0; x < Gpu.VramWidth; x++)
+        {
+            ushort px = vram[y * Gpu.VramWidth + x];
+            _rgb[o++] = (byte)((px & 0x1F) << 3);
+            _rgb[o++] = (byte)(((px >> 5) & 0x1F) << 3);
+            _rgb[o++] = (byte)(((px >> 10) & 0x1F) << 3);
         }
     }
 

@@ -10,6 +10,11 @@ internal static unsafe class Audio
     static AL? _al;
     static ALDevice* _device;
     static ALCtx* _context;
+
+    static uint _source;
+    static uint[] _buffers = new uint[4];
+    static short[] _sampleBuf = new short[735 * 2]; // 1 frame at 60Hz: 44100 / 60 = 735 samples. 2 channels.
+
     public static void Initialize()
     {
         try
@@ -24,6 +29,20 @@ internal static unsafe class Audio
             }
             _context = _alc.CreateContext(_device, null);
             _alc.MakeContextCurrent(_context);
+
+            _source = _al.GenSource();
+            fixed (uint* ptr = _buffers)
+                _al.GenBuffers(4, ptr);
+            
+            //initial empty rihgt
+            for (int i = 0; i < _buffers.Length; i++)
+            {
+                _al.BufferData(_buffers[i], BufferFormat.Stereo16, _sampleBuf, 44100);
+                uint b = _buffers[i];
+                _al.SourceQueueBuffers(_source, 1, &b);
+            }
+
+            _al.SourcePlay(_source);
         }
         catch (Exception e)
         {
@@ -31,9 +50,47 @@ internal static unsafe class Audio
         }
     }
 
+    public static void Present(Spu? spu)
+    {
+        if (_al == null || spu == null) return;
+
+        _al.GetSourceProperty(_source, GetSourceInteger.BuffersProcessed, out int processed);
+        while (processed > 0)
+        {
+            uint buf = 0;
+            _al.SourceUnqueueBuffers(_source, 1, &buf);
+            
+            for (int i = 0; i < 735; i++)
+            {
+                var (l, r) = spu.Tick();
+                if (XaAudio.Next(out short xl, out short xr))
+                {
+                    l = (short)Math.Clamp(l + xl, -32768, 32767);
+                    r = (short)Math.Clamp(r + xr, -32768, 32767);
+                }
+                _sampleBuf[i * 2] = l;
+                _sampleBuf[i * 2 + 1] = r;
+            }
+
+            _al.BufferData(buf, BufferFormat.Stereo16, _sampleBuf, 44100);
+            _al.SourceQueueBuffers(_source, 1, &buf);
+            processed--;
+        }
+
+        _al.GetSourceProperty(_source, GetSourceInteger.SourceState, out int state);
+        if (state != (int)SourceState.Playing)
+            _al.SourcePlay(_source);
+    }
+
     public static void Shutdown()
     {
         if (_alc == null) return;
+        if (_al != null)
+        {
+            _al.SourceStop(_source);
+            _al.DeleteSource(_source);
+            _al.DeleteBuffers(_buffers);
+        }
         if (_context != null) _alc.DestroyContext(_context);
         if (_device != null) _alc.CloseDevice(_device);
     }
