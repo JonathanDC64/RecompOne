@@ -48,7 +48,7 @@ public static class FunctionEmitter
         sb.AppendLine($"    public static void {name}(CpuContext c, IMemory m)");
         sb.AppendLine("    {");
         if (func.PreHookTarget.Length > 0)
-            sb.AppendLine($"        {func.PreHookTarget}(c, m);");
+            sb.AppendLine($"        if (!RecompOne.Runtime.Context.PreHook.Run({func.PreHookTarget}, c, m)) return;");
         if (ctx.Debug)
             sb.AppendLine($"        System.Console.WriteLine(\"{func.EmittedName} @ {func.OverlayName} @ 0x{func.Start:X8}\");");
 
