@@ -11,6 +11,7 @@ internal static class MainMenuBar
         ConfigMenu();
         DebugMenu();
         HelpMenu();
+        MenuRegistry.DrawMenus();
         ImGui.EndMainMenuBar();
     }
 

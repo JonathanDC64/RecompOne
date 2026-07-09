@@ -227,6 +227,7 @@ internal static class HostWindow
 
         DrawDockspace();
         PanelManager.DrawPanels();
+        MenuRegistry.DrawWindows();
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         gl.Viewport(0, 0, (uint)fbDef.X, (uint)fbDef.Y);
         _imgui.Render();
