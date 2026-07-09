@@ -1,6 +1,6 @@
 namespace RecompOne.Runtime.Host.Window;
 
-internal static class PanelManager
+public static class PanelManager
 {
     static readonly List<IPanel> _panels = [];
 
