@@ -320,6 +320,22 @@ public sealed class FunctionContext
     public bool Debug;
     public Dictionary<uint, JumpTable> JumpTablesByJr = [];
     public HashSet<uint> RaReturnJrs = [];
+    public MipsInstruction[] AllInstructions = [];
+    
+    public uint SkipNopPadding(uint addr) //faltru can end up in padding
+    {
+        if (AllInstructions.Length == 0) return addr;
+        uint baseAddr = AllInstructions[0].Vram;
+        if (addr < baseAddr) return addr;
+
+        int i = (int)((addr - baseAddr) / 4);
+        while (i >= 0 && i < AllInstructions.Length && AllInstructions[i].IsNop)
+        {
+            addr += 4;
+            i++;
+        }
+        return addr;
+    }
 }
 
 

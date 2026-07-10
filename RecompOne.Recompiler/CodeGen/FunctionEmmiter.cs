@@ -75,10 +75,11 @@ public static class FunctionEmitter
 
         if (FallsThrough(instrs))
         {
-            if (ctx.KnownFunctions.TryGetValue(func.End, out var fallthroughName))
+            uint target = ctx.SkipNopPadding(func.End);
+            if (ctx.KnownFunctions.TryGetValue(target, out var fallthroughName))
                 sb.AppendLine($"{ind}{fallthroughName}(c, m);");
             else
-                sb.AppendLine($"{ind}Dispatcher.Call(c, m, 0x{func.End:X8}u);");
+                sb.AppendLine($"{ind}Dispatcher.Call(c, m, 0x{target:X8}u);");
         }
 
         sb.AppendLine("    }");
