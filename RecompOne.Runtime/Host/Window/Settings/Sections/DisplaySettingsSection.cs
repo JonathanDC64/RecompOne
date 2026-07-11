@@ -18,5 +18,13 @@ internal sealed class DisplaySettingsSection : ISettingsSection
             HostWindow.SetFullscreen(fullscreen);
             ConfigManager.SaveView(PanelManager.Panels);
         }
+
+        bool native = ConfigManager.View.NativeResolution;
+        if (ImGui.Checkbox("Native resolution", ref native))
+        {
+            ConfigManager.View.NativeResolution = native;
+            Hle.GpuHle.NativeResolution = native;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
     }
 }

@@ -19,6 +19,7 @@ public sealed class GlBackend : IGpuBackend
     uint _vao, _vbo, _presentVao, _presentVbo, _progPrim, _progPresent, _progPresent24;
     uint _presentFbo, _presentTex;
     int _presentW, _presentH;
+    bool _presentNearest;
 
     readonly GlVertex[] _verts = new GlVertex[MaxVerts];
     int _count;
@@ -497,9 +498,10 @@ public sealed class GlBackend : IGpuBackend
         float aspect = src is { Margin: > 0 } ? GpuHle.WideAspect : GpuHle.OutputAspect;
 
 
-        int fbW = w1x * GlVram.Scale;
-        int fbH = h1x * GlVram.Scale;
-        EnsurePresentSize(fbW, fbH);
+        int presentScale = GpuHle.NativeResolution ? 1 : GlVram.Scale;
+        int fbW = w1x * presentScale;
+        int fbH = h1x * presentScale;
+        EnsurePresentSize(fbW, fbH, GpuHle.NativeResolution);
 
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _presentFbo);
         _gl.Viewport(0, 0, (uint)fbW, (uint)fbH);
@@ -535,12 +537,15 @@ public sealed class GlBackend : IGpuBackend
         return (_presentTex, fbW, fbH, aspect);
     }
 
-    unsafe void EnsurePresentSize(int w, int h)
+    unsafe void EnsurePresentSize(int w, int h, bool nearest)
     {
-        if (w == _presentW && h == _presentH) return;
+        if (w == _presentW && h == _presentH && nearest == _presentNearest) return;
         _gl.BindTexture(TextureTarget.Texture2D, _presentTex);
         _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba8, (uint)w, (uint)h, 0, PixelFormat.Rgba, PixelType.UnsignedByte, null);
-        _presentW = w; _presentH = h;
+        var filter = nearest ? GLEnum.Nearest : GLEnum.Linear;
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)filter);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)filter);
+        _presentW = w; _presentH = h; _presentNearest = nearest;
     }
 
     public void Dispose()

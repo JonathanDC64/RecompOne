@@ -43,4 +43,10 @@ public class ViewConfig
         get => GetBool("Fullscreen");
         set => SetBool("Fullscreen", value);
     }
+
+    public bool NativeResolution
+    {
+        get => GetBool("NativeResolution");
+        set => SetBool("NativeResolution", value);
+    }
 }

@@ -140,6 +140,7 @@ internal static class HostWindow
         _glBackend.InitGl();
         Hle.GpuHle.Active = _glBackend.Ready;
         Hle.GpuHle.Backend = _glBackend;
+        Hle.GpuHle.NativeResolution = ConfigManager.View.NativeResolution;
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 
