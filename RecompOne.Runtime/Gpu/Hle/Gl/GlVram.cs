@@ -4,9 +4,9 @@ namespace RecompOne.Runtime.Hle;
 
 public sealed class GlVram
 {
-    public const int Scale = 4;
-    public const int Width = VramShadow.Width * Scale;
-    public const int Height = VramShadow.Height * Scale;
+    public static int Scale { get; set; } = 4;
+    public static int Width => VramShadow.Width * Scale;
+    public static int Height => VramShadow.Height * Scale;
 
     readonly GL _gl;
     uint _tex, _fbo;
@@ -52,7 +52,7 @@ public sealed class GlVram
     public void BindDraw()
     {
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
-        _gl.Viewport(0, 0, Width, Height);
+        _gl.Viewport(0, 0, (uint)Width, (uint)Height);
     }
 
     public void Barrier() => _gl.TextureBarrier();

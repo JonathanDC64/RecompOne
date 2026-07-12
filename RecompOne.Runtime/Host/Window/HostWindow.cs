@@ -136,6 +136,7 @@ internal static class HostWindow
         _vramTex= CreateTexture(_gl);
         _ramTex = CreateTexture(_gl);
 
+        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : 4;
         _glBackend = new Hle.GlBackend(_gl);
         _glBackend.InitGl();
         Hle.GpuHle.Active = _glBackend.Ready;
