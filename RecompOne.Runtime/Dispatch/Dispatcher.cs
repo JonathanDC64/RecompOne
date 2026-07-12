@@ -10,7 +10,7 @@ public static class Dispatcher
     static readonly Dictionary<int, string> _lbaToName = [];
     static readonly List<string> _active = [];
     static readonly Dictionary<uint, Action<CpuContext, IMemory>> _funcMap = [];
-
+    private static IOverlay? _pending;
     public static void Register(string name, IOverlay overlay)
     {
         _registry[name] = overlay;
@@ -19,9 +19,27 @@ public static class Dispatcher
 
     public static void LoadByLba(int lba)
     {
-        if (_lbaToName.TryGetValue(lba, out var name)) Load(name);
+        if (!_lbaToName.TryGetValue(lba, out var name)) return;
+        var overlay = _registry[name];
+        if(overlay.Base == 0) { 
+            Load(name);
+            return;
+        }
+
+        _pending = overlay;
     }
 
+    public static void NotifyWrite(uint phys)
+    {
+        var p = _pending;
+        if (p == null) return;
+        uint start = p.Base & 0x1FFFFFFFu;
+        if (phys < start || phys >= start + 0x800u) return;
+        _pending = null;
+        Load(p.Name);
+    }
+    public static void ClearPending() => _pending = null;
+    
     public static void Load(string name)
     {
         if (!_registry.TryGetValue(name, out var overlay))

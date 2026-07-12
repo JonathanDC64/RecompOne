@@ -258,6 +258,7 @@ public static class LibCd
         _filterFile = _filterChannel = 0;
         Array.Clear(_pos);
         Array.Clear(_lastResult);
+        Dispatcher.ClearPending();
     }
 
     static bool CdInitInternal()
@@ -322,6 +323,7 @@ public static class LibCd
                 LibCdStream.OnStopStream();
                 _readActive = false;
                 _xaActive = false;
+                Dispatcher.ClearPending();
                 break;
             case Nop: case Play: case Mute:
             case Demute: case SeekL: case SeekP:

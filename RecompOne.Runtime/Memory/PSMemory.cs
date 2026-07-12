@@ -1,4 +1,5 @@
 using RecompOne.Runtime.Cdrom;
+using RecompOne.Runtime.Dispatch;
 using RecompOne.Runtime.Hardware;
 
 namespace RecompOne.Runtime.Memory;
@@ -50,7 +51,12 @@ public sealed class PSMemory : IMemory
     private void TrackWrite(uint phys, int size)
     {
         if (phys < MemoryMap.RamWindow)
+        {
+            uint off = phys % (uint)_ram.Length;
             Runtime.RamLog.RecordWrite(phys % (uint)_ram.Length, size);
+            Dispatcher.NotifyWrite(off);
+        }
+        
     }
 
     private Span<byte> Resolve(uint address, int size)
