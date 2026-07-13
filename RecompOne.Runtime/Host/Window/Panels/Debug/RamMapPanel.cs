@@ -44,9 +44,12 @@ internal sealed class RamMapPanel : IPanel
 
         if (ImGui.BeginMenu("Configuration"))
         {
-            ImGui.SliderFloat("Decay (frames)", ref Runtime.RamLog.DecayFrames, 10f, 600f);
+            //half life 3 is real
+            ImGui.SliderFloat("Decay half-life (frames)", ref Runtime.RamLog.DecayFrames, 10f, 600f);
             ImGui.Separator();
+            ImGui.ColorEdit4("Backdrop color", ref Runtime.RamLog.BackdropColor);
             ImGui.ColorEdit4("Write color", ref Runtime.RamLog.WriteColor);
+            ImGui.ColorEdit4("Read color", ref Runtime.RamLog.ReadColor);
             ImGui.EndMenu();
         }
 
@@ -83,11 +86,11 @@ internal sealed class RamMapPanel : IPanel
 
         if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) && _hoveredAddr.HasValue)
         {
-            var hex = PanelManager.Get<RamHexPanel>();
-            if (hex != null)
+            var editor = PanelManager.Get<MemoryEditorPanel>();
+            if (editor != null)
             {
-                hex.JumpTo(_hoveredAddr.Value);
-                hex.IsOpen = true;
+                editor.JumpTo(_hoveredAddr.Value);
+                editor.IsOpen = true;
             }
         }
     }

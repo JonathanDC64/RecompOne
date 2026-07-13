@@ -101,6 +101,10 @@ public static class XaAudio
 
     public static int BufferedSamples { get { lock (_gate) return _count; } }
 
+    public static bool Playing { get { lock (_gate) return _playing; } }
+
+    public static int SourceRate { get { lock (_gate) return _srcRate; } }
+
     public static bool Next(out short left, out short right)
     {
         lock (_gate)

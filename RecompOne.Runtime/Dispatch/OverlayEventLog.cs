@@ -1,6 +1,6 @@
 namespace RecompOne.Runtime.Dispatch;
 
-public enum OverlayEventKind { Loaded, Unloaded, Overwritten }
+public enum OverlayEventKind { Loaded, Unloaded, Overwritten, VramCollision }
 
 public readonly record struct OverlayEvent(
     long   TimestampMs,

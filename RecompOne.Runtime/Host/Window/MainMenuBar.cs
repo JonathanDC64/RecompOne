@@ -62,14 +62,23 @@ internal static class MainMenuBar
         if (ImGui.BeginMenu("Memory"))
         {
             Toggle<RamMapPanel>("RAM Map");
-            Toggle<RamHexPanel>("RAM Hex");
-            ImGui.Separator();
-            Toggle<DmaViewerPanel>("DMA Viewer");
+            Toggle<MemoryEditorPanel>("Memory Editor");
+            ImGui.EndMenu();
+        }
+        if (ImGui.BeginMenu("Audio"))
+        {
+            Toggle<SpuViewerPanel>("SPU Viewer");
+            ImGui.EndMenu();
+        }
+        if (ImGui.BeginMenu("CD"))
+        {
+            Toggle<CdDebugPanel>("CD Debug");
             ImGui.EndMenu();
         }
         if (ImGui.BeginMenu("System"))
         {
             Toggle<OverlayEventsPanel>("Overlay Events");
+            Toggle<ConsolePanel>("Console");
             ImGui.EndMenu();
         }
 

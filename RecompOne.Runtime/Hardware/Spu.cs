@@ -83,7 +83,24 @@ public sealed class Spu
         0x5997, 0x599E, 0x59A4, 0x59A9, 0x59AD, 0x59B0, 0x59B2, 0x59B3  //
     };
 
-    enum AdsrPhase { Off, Attack, Decay, Sustain, Release }
+    public enum AdsrPhase { Off, Attack, Decay, Sustain, Release }
+
+    public struct VoiceDebug
+    {
+        public AdsrPhase Phase;
+        public short AdsrVol;
+        public ushort VolL, VolR, Pitch, StartAddr, RepeatAddr;
+        public uint CurAddr;
+        public bool EndX, Noise, Pmod, Reverb;
+    }
+
+    public struct SpuDebug
+    {
+        public ushort MainVolL, MainVolR, ReverbVolL, ReverbVolR;
+        public ushort CdVolL, CdVolR, ExtVolL, ExtVolR;
+        public ushort Spucnt;
+        public uint TransferAddr, ReverbStartAddr, Endx;
+    }
 
     sealed class Voice
     {
@@ -282,6 +299,51 @@ public sealed class Spu
     }
 
     public uint TransferAddrBytes() => (uint)_transferAddr << 3;
+
+    public void CaptureDebug(VoiceDebug[] voices, out SpuDebug state)
+    {
+        lock (_sync)
+        {
+            uint nonMask = (uint)(_non | (_nonHi << 16));
+            uint pmonMask = (uint)(_pmon | (_pmonHi << 16));
+            uint eonMask = (uint)(_eon | (_eonHi << 16));
+
+            int n = Math.Min(voices.Length, 24);
+            for (int i = 0; i < n; i++)
+            {
+                var v = _v[i];
+                voices[i] = new VoiceDebug {
+                    Phase = v.Phase,
+                    AdsrVol = v.AdsrVol,
+                    VolL = v.VolL,
+                    VolR = v.VolR,
+                    Pitch = v.Pitch,
+                    StartAddr = v.StartAddr,
+                    RepeatAddr = v.RepeatAddr,
+                    CurAddr = v.CurAddr,
+                    EndX = v.EndX,
+                    Noise = (nonMask & (1u << i)) != 0,
+                    Pmod = (pmonMask & (1u << i)) != 0,
+                    Reverb = (eonMask & (1u << i)) != 0
+                };
+            }
+
+            state = new SpuDebug {
+                MainVolL = _mainVolL,
+                MainVolR = _mainVolR,
+                ReverbVolL = _reverbVolL,
+                ReverbVolR = _reverbVolR,
+                CdVolL = _cdVolL,
+                CdVolR = _cdVolR,
+                ExtVolL = _extVolL,
+                ExtVolR = _extVolR,
+                Spucnt = _spucnt,
+                TransferAddr = (uint)_transferAddr << 3,
+                ReverbStartAddr = (uint)_reverbStartAddr << 3,
+                Endx = _endx
+            };
+        }
+    }
 
     public void DmaWrite(uint spuByteAddr, ReadOnlySpan<byte> data)
     {

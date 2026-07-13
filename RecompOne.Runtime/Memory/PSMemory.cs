@@ -56,7 +56,13 @@ public sealed class PSMemory : IMemory
             Runtime.RamLog.RecordWrite(phys % (uint)_ram.Length, size);
             Dispatcher.NotifyWrite(off);
         }
-        
+
+    }
+
+    private void TrackRead(uint phys, int size)
+    {
+        if (RamLogger.TrackReads && phys < MemoryMap.RamWindow)
+            Runtime.RamLog.RecordRead(phys % (uint)_ram.Length, size);
     }
 
     private Span<byte> Resolve(uint address, int size)
@@ -84,6 +90,7 @@ public sealed class PSMemory : IMemory
     public byte ReadU8(uint address)
     {
         uint phys = MemoryMap.ToPhysical(address);
+        TrackRead(phys, 1);
         if (_cd != null && IsCd(phys)) return _cd.Read(phys);
         return Resolve(address, 1)[0];
     }
@@ -91,6 +98,7 @@ public sealed class PSMemory : IMemory
     public ushort ReadU16(uint address)
     {
         uint phys = MemoryMap.ToPhysical(address);
+        TrackRead(phys, 2);
         if (_cd != null && IsCd(phys)) return _cd.Read(phys);
         if (IsSpu(phys)) return _spu.ReadReg16(phys);
         if (Timers.InRange(phys) && _timers.TryRead(phys, out uint tv)) return (ushort)tv;
@@ -101,6 +109,7 @@ public sealed class PSMemory : IMemory
     public uint ReadU32(uint address)
     {
         uint phys = MemoryMap.ToPhysical(address);
+        TrackRead(phys, 4);
         if (phys == 0x1F801810u) return _gpu.ReadData();
         if (phys == 0x1F801814u) return _gpu.ReadStat();
         if (phys == 0x1F801820u) return _mdec.ReadData();

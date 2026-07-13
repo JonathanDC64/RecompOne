@@ -23,6 +23,121 @@ public sealed class CdController
     private bool _streamPending;
     private byte _lastIrq;
 
+    private readonly object _dbgGate = new();
+    private readonly Queue<string> _dbgEvents = new();
+    private const int DbgMaxEvents = 256;
+    private long _sectorsRead;
+    private int _lastReadLba;
+
+    public struct CdDebug
+    {
+        public int SeekLba, LastReadLba;
+        public bool Reading, StreamPending, DataReady;
+        public byte IrqFlags, LastIrq, Index;
+        public int PendingIrqCount, ParamCount, ResponseCount, DataFifoPos, DataBufLength;
+        public long SectorsRead;
+    }
+
+    private sealed class ReadRun
+    {
+        public int Start, Count;
+        public string Time = "";
+    }
+
+    private readonly Dictionary<string, ReadRun> _runs = new();
+
+    private void DbgEvent(string msg)
+    {
+        lock (_dbgGate)
+        {
+            FlushRunsLocked();
+            EnqueueLocked($"{DateTime.Now:HH:mm:ss.fff}  {msg}");
+        }
+    }
+
+    private void DbgReadRun(string source, int lba)
+    {
+        lock (_dbgGate)
+        {
+            if (_runs.TryGetValue(source, out var run))
+            {
+                if (lba == run.Start + run.Count) { run.Count++; return; }
+                EnqueueLocked(RunLine(source, run));
+            }
+            _runs[source] = new ReadRun { Start = lba, Count = 1, Time = DateTime.Now.ToString("HH:mm:ss.fff") };
+        }
+    }
+
+    private void FlushRunsLocked()
+    {
+        foreach (var (source, run) in _runs)
+            EnqueueLocked(RunLine(source, run));
+        _runs.Clear();
+    }
+
+    private void EnqueueLocked(string line)
+    {
+        _dbgEvents.Enqueue(line);
+        while (_dbgEvents.Count > DbgMaxEvents) _dbgEvents.Dequeue();
+    }
+
+    private static string RunLine(string source, ReadRun run) =>
+        run.Count == 1
+            ? $"{run.Time}  {source} lba={run.Start}"
+            : $"{run.Time}  {source} lba={run.Start}..{run.Start + run.Count - 1} ({run.Count} sectors)";
+
+    public void ClearDebugEvents()
+    {
+        lock (_dbgGate)
+        {
+            _dbgEvents.Clear();
+            _runs.Clear();
+        }
+    }
+
+    public void CaptureDebug(out CdDebug d, List<string> events)
+    {
+        d = new CdDebug {
+            SeekLba = _seekLba,
+            LastReadLba = _lastReadLba,
+            Reading = _reading,
+            StreamPending = _streamPending,
+            DataReady = _dataReady,
+            IrqFlags = _irqFlags,
+            LastIrq = _lastIrq,
+            Index = _index,
+            PendingIrqCount = _pendingIrqs.Count,
+            ParamCount = _paramFifo.Count,
+            ResponseCount = _responseFifo.Count,
+            DataFifoPos = _dataFifoPos,
+            DataBufLength = _dataBuf.Length,
+            SectorsRead = _sectorsRead
+        };
+        lock (_dbgGate)
+        {
+            events.Clear();
+            events.AddRange(_dbgEvents);
+            foreach (var (source, run) in _runs)
+                events.Add(RunLine(source, run));
+        }
+    }
+
+    private static string CmdName(byte cmd) => cmd switch {
+        0x01 => "GetStat",
+        0x02 => "Setloc",
+        0x06 => "ReadN",
+        0x08 => "Stop",
+        0x09 => "Pause",
+        0x0A => "Init",
+        0x0B => "Mute",
+        0x0C => "Demute",
+        0x0E => "Setmode",
+        0x15 => "SeekL",
+        0x16 => "SeekP",
+        0x1B => "ReadS",
+        _ => $"0x{cmd:X2}"
+    };
+
     public CdController(CueFs fs, IMemory m)
     {
         _fs = fs;
@@ -39,6 +154,7 @@ public sealed class CdController
         for (int i = 0; i < count; i++)
             _m.WriteU8(address + (uint)i, data[offset + i]);
         RecompOne.Runtime.Log.Cd($"{path} -> 0x{address:X8} | {count} bytes");
+        DbgEvent($"file {path} -> 0x{address:X8} ({count} bytes)");
         Dispatcher.TryLoad(CdUtils.OverlayName(CdUtils.ExtractFileName(path)));
     }
 
@@ -87,6 +203,9 @@ public sealed class CdController
         RecompOne.Runtime.Log.Cd($"cmd 0x{cmd:X2}");
         var prms = new List<byte>();
         while (_paramFifo.Count > 0) prms.Add(_paramFifo.Dequeue());
+        DbgEvent(prms.Count > 0
+            ? $"{CmdName(cmd)} ({string.Join(" ", prms.Select(p => p.ToString("X2")))}) lba={_seekLba}"
+            : $"{CmdName(cmd)} lba={_seekLba}");
 
         switch (cmd)
         {
@@ -229,6 +348,9 @@ public sealed class CdController
         try
         {
             _dataBuf = _fs.ReadSector(_seekLba);
+            DbgReadRun("read", _seekLba);
+            _lastReadLba = _seekLba;
+            _sectorsRead++;
             _seekLba++;
         }
         catch
@@ -247,11 +369,18 @@ public sealed class CdController
         return (byte[])_dataBuf.Clone();
     }
 
-    public byte[] ReadSectorData(int lba, int size) => _fs.ReadSectorData(lba, size);
+    public byte[] ReadSectorData(int lba, int size)
+    {
+        DbgReadRun(size == 2336 ? "readXA" : "read", lba);
+        _lastReadLba = lba;
+        _sectorsRead++;
+        return _fs.ReadSectorData(lba, size);
+    }
 
     public void QueueAsyncSeekL(byte mm, byte ss, byte ff)
     {
         _seekLba = BcdToLba(mm, ss, ff);
+        DbgEvent($"async SeekL lba={_seekLba}");
         QueueIrq(3, [DriveStatus()]);
         QueueIrq(2, [DriveStatus()]);
     }
@@ -263,11 +392,13 @@ public sealed class CdController
 
     public void QueueAsyncSetMode(byte mode)
     {
+        DbgEvent($"async Setmode {mode:X2}");
         QueueIrq(3, [DriveStatus()]);
     }
 
     public void QueueAsyncReadSector(uint count, uint dstAddr, uint mode)
     {
+        DbgEvent($"async ReadSector lba={_seekLba} count={count} dst=0x{dstAddr:X8}");
         for (uint i = 0; i < count; i++)
         {
             ReadNextSector();

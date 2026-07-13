@@ -17,11 +17,16 @@ public static class Dispatcher
         if (overlay.LbaStart >= 0) _lbaToName[overlay.LbaStart] = name;
     }
 
+    public static string[] ActiveNames
+    {
+        get { lock (_active) return _active.ToArray(); }
+    }
+
     public static void LoadByLba(int lba)
     {
         if (!_lbaToName.TryGetValue(lba, out var name)) return;
         var overlay = _registry[name];
-        if(overlay.Base == 0) { 
+        if(overlay.Base == 0) {
             Load(name);
             return;
         }
@@ -39,20 +44,99 @@ public static class Dispatcher
         Load(p.Name);
     }
     public static void ClearPending() => _pending = null;
-    
+
     public static void Load(string name)
     {
         if (!_registry.TryGetValue(name, out var overlay))
             throw new KeyNotFoundException($"overlay not registered: {name}");
 
-        bool already = _active.Remove(name);
-        _active.Add(name);
+        bool already;
+        lock (_active) already = _active.Remove(name);
+
+        if (!already) HandleRegionOverwrites(overlay);
+
+        lock (_active) _active.Add(name);
         foreach (var (addr, fn) in overlay.Functions)
             _funcMap[addr] = fn;
 
         if (already) return;
         Runtime.OverlayLog.Record(name, OverlayEventKind.Loaded);
         Console.WriteLine($"[Dispatcher] loaded overlay: {name}");
+    }
+
+    static void HandleRegionOverwrites(IOverlay overlay)
+    {
+        uint newStart = overlay.Base & 0x1FFFFFFFu;
+        uint newEnd = newStart + overlay.Size;
+        bool hasRegion = overlay.Base != 0 && overlay.Size != 0;
+
+        List<string>? overwritten = null;
+        List<(string Name, int Funcs)>? vramCollisions = null;
+
+        lock (_active)
+        {
+            foreach (var activeName in _active)
+            {
+                var other = _registry[activeName];
+                bool otherHasRegion = other.Base != 0 && other.Size != 0;
+
+                if (hasRegion && otherHasRegion)
+                {
+                    uint s = other.Base & 0x1FFFFFFFu;
+                    uint e = s + other.Size;
+
+                    if (s < newEnd && e > newStart)
+                    {
+                        if (s >= newStart && e <= newEnd)
+                        {
+                            overwritten ??= [];
+                            overwritten.Add(activeName);
+                        }
+                        continue;
+                    }
+                }
+
+                int shared = CountSharedFunctions(overlay, other);
+                if (shared > 0)
+                {
+                    vramCollisions ??= [];
+                    vramCollisions.Add((activeName, shared));
+                }
+            }
+
+            if (overwritten != null)
+                foreach (var d in overwritten) _active.Remove(d);
+        }
+
+        if (overwritten != null)
+        {
+            Rebuild();
+            foreach (var d in overwritten)
+            {
+                Runtime.OverlayLog.Record(d, OverlayEventKind.Overwritten, overlay.Name);
+                Console.WriteLine($"[Dispatcher] overlay {d} overwritten by {overlay.Name}");
+            }
+        }
+
+        if (vramCollisions != null)
+        {
+            foreach (var (otherName, n) in vramCollisions)
+            {
+                Runtime.OverlayLog.Record(overlay.Name, OverlayEventKind.VramCollision, $"{otherName} ({n} funcs)");
+                Console.WriteLine($"[Dispatcher] overlay {overlay.Name} vvram colision with {otherName}: {n} functions");
+            }
+        }
+    }
+
+    static int CountSharedFunctions(IOverlay a, IOverlay b)
+    {
+        var smaller = a.Functions.Count <= b.Functions.Count ? a : b;
+        var larger = ReferenceEquals(smaller, a) ? b : a;
+
+        int n = 0;
+        foreach (var addr in smaller.Functions.Keys)
+            if (larger.Functions.ContainsKey(addr)) n++;
+        return n;
     }
 
     public static void TryLoad(string name)
@@ -63,7 +147,9 @@ public static class Dispatcher
 
     public static void Unload(string name)
     {
-        if (!_active.Remove(name)) return;
+        bool removed;
+        lock (_active) removed = _active.Remove(name);
+        if (!removed) return;
         Rebuild();
         Runtime.OverlayLog.Record(name, OverlayEventKind.Unloaded);
     }
@@ -79,8 +165,11 @@ public static class Dispatcher
     static void Rebuild()
     {
         _funcMap.Clear();
-        foreach (var name in _active)
-            foreach (var (addr, fn) in _registry[name].Functions)
-                _funcMap[addr] = fn;
+        lock (_active)
+        {
+            foreach (var name in _active)
+                foreach (var (addr, fn) in _registry[name].Functions)
+                    _funcMap[addr] = fn;
+        }
     }
 }

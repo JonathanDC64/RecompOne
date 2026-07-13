@@ -149,8 +149,10 @@ internal static class HostWindow
         PanelManager.Register(new VramViewerPanel());
         PanelManager.Register(new CpuStatePanel());
         PanelManager.Register(new RamMapPanel());
-        PanelManager.Register(new RamHexPanel());
-        PanelManager.Register(new DmaViewerPanel());
+        PanelManager.Register(new MemoryEditorPanel());
+        PanelManager.Register(new SpuViewerPanel());
+        PanelManager.Register(new CdDebugPanel());
+        PanelManager.Register(new ConsolePanel());
         PanelManager.Register(new OverlayEventsPanel());
         PanelManager.Register(new SettingsPopup());
         PanelManager.Register(new AboutPopup());
@@ -192,6 +194,9 @@ internal static class HostWindow
         gl.Clear(ClearBufferMask.ColorBufferBit);
 
         Runtime.RamLog.Tick();
+        Memory.RamLogger.TrackReads =
+            PanelManager.Get<RamMapPanel>()?.IsOpen == true ||
+            PanelManager.Get<MemoryEditorPanel>()?.IsOpen == true;
 
         var gpu = _gpu;
         if (gpu != null)

@@ -18,6 +18,7 @@ internal sealed class OverlayEventsPanel : IPanel
     static readonly Vector4 ColLoaded = new(0.30f, 1.00f, 0.40f, 1f);
     static readonly Vector4 ColUnloaded = new(0.55f, 0.55f, 0.55f, 1f);
     static readonly Vector4 ColOverwritten = new(1.00f, 0.70f, 0.15f, 1f);
+    static readonly Vector4 ColVramCollision = new(1.00f, 0.35f, 0.35f, 1f);
 
     public void Draw()
     {
@@ -54,25 +55,11 @@ internal sealed class OverlayEventsPanel : IPanel
         ImGui.SameLine();
 
         bool any = false;
-        foreach (var ev in _snapshot)
+        foreach (var name in Dispatcher.ActiveNames)
         {
-            if (ev.Kind == OverlayEventKind.Loaded)
-            {
-                bool stillActive = true;
-                foreach (var later in _snapshot)
-                {
-                    if (later.TimestampMs > ev.TimestampMs &&
-                        (later.OverlayName == ev.OverlayName || later.DisplacedBy == null && later.Kind == OverlayEventKind.Unloaded && later.OverlayName == ev.OverlayName))
-                    {
-                        stillActive = false;
-                        break;
-                    }
-                }
-                if (!stillActive) continue;
-                if (any) { ImGui.SameLine(); ImGui.TextDisabled("·"); ImGui.SameLine(); }
-                ImGuiEx.TextColored(ColLoaded, ev.OverlayName);
-                any = true;
-            }
+            if (any) { ImGui.SameLine(); ImGui.TextDisabled("·"); ImGui.SameLine(); }
+            ImGuiEx.TextColored(ColLoaded, name);
+            any = true;
         }
 
         if (!any) ImGui.TextDisabled("none");
@@ -90,7 +77,7 @@ internal sealed class OverlayEventsPanel : IPanel
 
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableSetupColumn("Time",    ImGuiTableColumnFlags.WidthFixed, 76);
-        ImGui.TableSetupColumn("Event",   ImGuiTableColumnFlags.WidthFixed, 82);
+        ImGui.TableSetupColumn("Event",   ImGuiTableColumnFlags.WidthFixed, 104);
         ImGui.TableSetupColumn("Overlay", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("Notes",   ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableHeadersRow();
@@ -109,6 +96,7 @@ internal sealed class OverlayEventsPanel : IPanel
                 OverlayEventKind.Loaded => ("loaded",      ColLoaded),
                 OverlayEventKind.Unloaded => ("unloaded",    ColUnloaded),
                 OverlayEventKind.Overwritten => ("overwritten", ColOverwritten),
+                OverlayEventKind.VramCollision => ("vram collision", ColVramCollision),
                 _ => ("?",           ColUnloaded),
             };
             ImGuiEx.TextColored(color, label);
@@ -118,7 +106,7 @@ internal sealed class OverlayEventsPanel : IPanel
 
             ImGui.TableSetColumnIndex(3);
             if (ev.DisplacedBy != null)
-                ImGuiEx.TextDisabled($"by {ev.DisplacedBy}");
+                ImGuiEx.TextDisabled(ev.Kind == OverlayEventKind.VramCollision ? $"with {ev.DisplacedBy}" : $"by {ev.DisplacedBy}");
         }
 
         if (_scrollPending || (_autoScroll && _snapshot.Count > 0))
