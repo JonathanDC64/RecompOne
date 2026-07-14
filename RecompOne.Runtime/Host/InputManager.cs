@@ -9,7 +9,8 @@ internal static unsafe class InputManager
 {
     static IKeyboard?_keyboard;
     static Sdl?_sdl;
-    static GameController* _controller;
+    static GameController* _pad0;
+    static GameController* _pad1;
 
     const int AxisThreshold = 8000;
     const int StickThreshold = 16000;
@@ -44,12 +45,14 @@ internal static unsafe class InputManager
             _sdl = Sdl.GetApi();
             _sdl.SetHint("SDL_JOYSTICK_RAWINPUT", "0");
             _sdl.InitSubSystem(Sdl.InitGamecontroller);
-            TryOpenController();
+            Rescan();
         }
         catch { _sdl = null; }
     }
 
-    public static bool IsConnected => _controller != null;
+    public static bool IsConnected => _pad0 != null;
+
+    public static bool IsPadConnected(int pad) => pad == 0 ? _pad0 != null : _pad1 != null;
 
     public static bool IsKeyDown(Key k) => _keyboard?.IsKeyPressed(k) ?? false;
 
@@ -57,23 +60,21 @@ internal static unsafe class InputManager
     {
         PollGamepadEvents();
         PollKeyboard();
-        PollGamepad();
+        PollGamepads();
+        Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
     }
 
-    public static int? GetFirstPressedPadButton()
+    public static int? GetFirstPressedPadButton(int pad = 0)
     {
-        if (_sdl == null || _controller == null) return null;
+        var ctrl = pad == 0 ? _pad0 : _pad1;
+        if (_sdl == null || ctrl == null) return null;
         for (int b = 0; b < (int)GameControllerButton.Max; b++)
-            if (_sdl.GameControllerGetButton(_controller, (GameControllerButton)b) != 0)
+            if (_sdl.GameControllerGetButton(ctrl, (GameControllerButton)b) != 0)
                 return b;
-        if (_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Triggerleft)  > AxisThreshold) return LeftTrigger;
-        if (_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Triggerright) > AxisThreshold) return RightTrigger;
+        if (Pressed(ctrl, LeftTrigger)) return LeftTrigger;
+        if (Pressed(ctrl, RightTrigger)) return RightTrigger;
         for (int b = LeftStickLeft; b <= RightStickDown; b++)
-        {
-            var (axis, positive) = AxisBinding(b);
-            short v = _sdl.GameControllerGetAxis(_controller, axis);
-            if (positive ? v > StickThreshold : v < -StickThreshold) return b;
-        }
+            if (Pressed(ctrl, b)) return b;
         return null;
     }
 
@@ -93,7 +94,7 @@ internal static unsafe class InputManager
 
     public static void Shutdown()
     {
-        if (_controller != null) { _sdl?.GameControllerClose(_controller); _controller = null; }
+        CloseControllers();
         _sdl?.QuitSubSystem(Sdl.InitGamecontroller);
         _sdl?.Dispose();
         _sdl = null;
@@ -103,24 +104,51 @@ internal static unsafe class InputManager
     {
         if (_sdl == null) return;
         Event ev;
+        bool changed = false;
         while (_sdl.PollEvent(&ev) != 0)
         {
-            if (ev.Type == (uint)EventType.Controllerdeviceadded && _controller == null)
-                TryOpenController();
-            if (ev.Type == (uint)EventType.Controllerdeviceremoved)
-            {
-                _sdl.GameControllerClose(_controller);
-                _controller = null;
-            }
+            if (ev.Type == (uint)EventType.Controllerdeviceadded) changed = true;
+            if (ev.Type == (uint)EventType.Controllerdeviceremoved) changed = true;
+        }
+        if (changed) Rescan();
+    }
+
+    static void CloseControllers()
+    {
+        if (_pad0 != null) { _sdl?.GameControllerClose(_pad0); _pad0 = null; }
+        if (_pad1 != null) { _sdl?.GameControllerClose(_pad1); _pad1 = null; }
+    }
+
+    static void Rescan()
+    {
+        if (_sdl == null) return;
+        CloseControllers();
+        int n = _sdl.NumJoysticks();
+        for (int i = 0; i < n; i++)
+        {
+            if (_sdl.IsGameController(i) != SdlBool.True) continue;
+            var ctrl = _sdl.GameControllerOpen(i);
+            if (ctrl == null) continue;
+            if (_pad0 == null) _pad0 = ctrl;
+            else { _pad1 = ctrl; break; }
         }
     }
 
     static void PollKeyboard()
     {
         var kb = _keyboard;
-        var cfg = ConfigManager.Game.Keys;
-        if (kb == null) return;
+        if (kb == null)
+        {
+            Controller.State = 0xFFFF;
+            Controller.State2 = 0xFFFF;
+            return;
+        }
+        Controller.State = KeyState(kb, ConfigManager.Game.Keys);
+        Controller.State2 = KeyState(kb, ConfigManager.Game.Keys2);
+    }
 
+    static ushort KeyState(IKeyboard kb, KeyBindings cfg)
+    {
         ushort s = 0xFFFF;
         void B(string keyName, ushort bit)
         {
@@ -145,60 +173,85 @@ internal static unsafe class InputManager
         B(cfg.Left,     Controller.Left);
         B(cfg.Right,    Controller.Right);
 
-        Controller.State = s;
+        return s;
     }
 
-    static void PollGamepad()
-    {
-        if (_sdl == null || _controller == null) return;
-        var pad = ConfigManager.Game.Pad;
-        ushort s = Controller.State;
+    static bool HasAnyKey(KeyBindings cfg) =>
+        cfg.Cross.Length > 0 || cfg.Circle.Length > 0 || cfg.Square.Length > 0 || cfg.Triangle.Length > 0 ||
+        cfg.L1.Length > 0 || cfg.R1.Length > 0 || cfg.L2.Length > 0 || cfg.R2.Length > 0 ||
+        cfg.L3.Length > 0 || cfg.R3.Length > 0 || cfg.Start.Length > 0 || cfg.Select.Length > 0 ||
+        cfg.Up.Length > 0 || cfg.Down.Length > 0 || cfg.Left.Length > 0 || cfg.Right.Length > 0;
 
-        void B(int binding, ushort bit)
+    static void PollGamepads()
+    {
+        if (_sdl == null) return;
+
+        if (_pad0 != null)
         {
-            if (binding == LeftTrigger)
-            {
-                if (_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Triggerleft) > AxisThreshold)
-                    s &= (ushort)~bit;
-            }
-            else if (binding == RightTrigger)
-            {
-                if (_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Triggerright) > AxisThreshold)
-                    s &= (ushort)~bit;
-            }
-            else if (IsStickBinding(binding))
-            {
-                var (axis, positive) = AxisBinding(binding);
-                short v = _sdl.GameControllerGetAxis(_controller, axis);
-                if (positive ? v > StickThreshold : v < -StickThreshold)
-                    s &= (ushort)~bit;
-            }
-            else if (_sdl.GameControllerGetButton(_controller, (GameControllerButton)binding) != 0)
-                s &= (ushort)~bit;
+            Controller.State = PadState(_pad0, ConfigManager.Game.Pad, Controller.State);
+            Controller.LeftX = AxisToByte(_sdl.GameControllerGetAxis(_pad0, GameControllerAxis.Leftx));
+            Controller.LeftY = AxisToByte(_sdl.GameControllerGetAxis(_pad0, GameControllerAxis.Lefty));
+            Controller.RightX = AxisToByte(_sdl.GameControllerGetAxis(_pad0, GameControllerAxis.Rightx));
+            Controller.RightY = AxisToByte(_sdl.GameControllerGetAxis(_pad0, GameControllerAxis.Righty));
         }
 
-        B(pad.Cross,    Controller.Cross);
-        B(pad.Circle,   Controller.Circle);
-        B(pad.Square,   Controller.Square);
-        B(pad.Triangle, Controller.Triangle);
-        B(pad.L1,       Controller.L1);
-        B(pad.R1,       Controller.R1);
-        B(pad.L2,       Controller.L2);
-        B(pad.R2,       Controller.R2);
-        B(pad.L3,       Controller.L3);
-        B(pad.R3,       Controller.R3);
-        B(pad.Start,    Controller.Start);
-        B(pad.Select,   Controller.Select);
-        B(pad.Up,       Controller.Up);
-        B(pad.Down,     Controller.Down);
-        B(pad.Left,     Controller.Left);
-        B(pad.Right,    Controller.Right);
+        if (_pad1 != null)
+        {
+            Controller.State2 = PadState(_pad1, ConfigManager.Game.Pad2, Controller.State2);
+            Controller.LeftX2 = AxisToByte(_sdl.GameControllerGetAxis(_pad1, GameControllerAxis.Leftx));
+            Controller.LeftY2 = AxisToByte(_sdl.GameControllerGetAxis(_pad1, GameControllerAxis.Lefty));
+            Controller.RightX2 = AxisToByte(_sdl.GameControllerGetAxis(_pad1, GameControllerAxis.Rightx));
+            Controller.RightY2 = AxisToByte(_sdl.GameControllerGetAxis(_pad1, GameControllerAxis.Righty));
+        }
+        else
+        {
+            Controller.LeftX2 = Controller.LeftY2 = Controller.RightX2 = Controller.RightY2 = 0x80;
+        }
+    }
 
-        Controller.State = s;
-        Controller.LeftX = AxisToByte(_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Leftx));
-        Controller.LeftY = AxisToByte(_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Lefty));
-        Controller.RightX = AxisToByte(_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Rightx));
-        Controller.RightY = AxisToByte(_sdl.GameControllerGetAxis(_controller, GameControllerAxis.Righty));
+    static ushort PadState(GameController* ctrl, GamepadBindings pad, ushort s)
+    {
+        s = Apply(ctrl, pad.Cross,    Controller.Cross,    s);
+        s = Apply(ctrl, pad.Circle,   Controller.Circle,   s);
+        s = Apply(ctrl, pad.Square,   Controller.Square,   s);
+        s = Apply(ctrl, pad.Triangle, Controller.Triangle, s);
+        s = Apply(ctrl, pad.L1,       Controller.L1,       s);
+        s = Apply(ctrl, pad.R1,       Controller.R1,       s);
+        s = Apply(ctrl, pad.L2,       Controller.L2,       s);
+        s = Apply(ctrl, pad.R2,       Controller.R2,       s);
+        s = Apply(ctrl, pad.L3,       Controller.L3,       s);
+        s = Apply(ctrl, pad.R3,       Controller.R3,       s);
+        s = Apply(ctrl, pad.Start,    Controller.Start,    s);
+        s = Apply(ctrl, pad.Select,   Controller.Select,   s);
+        s = Apply(ctrl, pad.Up,       Controller.Up,       s);
+        s = Apply(ctrl, pad.Down,     Controller.Down,     s);
+        s = Apply(ctrl, pad.Left,     Controller.Left,     s);
+        s = Apply(ctrl, pad.Right,    Controller.Right,    s);
+        return s;
+    }
+
+    static ushort Apply(GameController* ctrl, int[] bindings, ushort bit, ushort s)
+    {
+        foreach (var binding in bindings)
+            if (Pressed(ctrl, binding))
+                return (ushort)(s & ~bit);
+        return s;
+    }
+
+    static bool Pressed(GameController* ctrl, int binding)
+    {
+        if (_sdl == null) return false;
+        if (binding == LeftTrigger)
+            return _sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerleft) > AxisThreshold;
+        if (binding == RightTrigger)
+            return _sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerright) > AxisThreshold;
+        if (IsStickBinding(binding))
+        {
+            var (axis, positive) = AxisBinding(binding);
+            short v = _sdl.GameControllerGetAxis(ctrl, axis);
+            return positive ? v > StickThreshold : v < -StickThreshold;
+        }
+        return _sdl.GameControllerGetButton(ctrl, (GameControllerButton)binding) != 0;
     }
 
     static byte AxisToByte(short axis)
@@ -209,11 +262,11 @@ internal static unsafe class InputManager
 
     public static void SetRumble(byte large, byte small)
     {
-        if (_sdl == null || _controller == null) return;
+        if (_sdl == null || _pad0 == null) return;
         ushort lo = (ushort)(large * 257);
         ushort hi = small != 0 ? (ushort)65535 : (ushort)0;
         uint duration = large == 0 && small == 0 ? 0u : 500u;
-        _sdl.GameControllerRumble(_controller, lo, hi, duration);
+        _sdl.GameControllerRumble(_pad0, lo, hi, duration);
     }
 
     static void OnKeyDown(IKeyboard kb, Key key, int _)
@@ -222,15 +275,4 @@ internal static unsafe class InputManager
         if (key == Key.F11) _fullscreenToggle = true;
     }
 
-    static void TryOpenController()
-    {
-        if (_sdl == null) return;
-        int n = _sdl.NumJoysticks();
-        for (int i = 0; i < n; i++)
-        {
-            if (_sdl.IsGameController(i) != SdlBool.True) continue;
-            _controller = _sdl.GameControllerOpen(i);
-            if (_controller != null) break;
-        }
-    }
 }

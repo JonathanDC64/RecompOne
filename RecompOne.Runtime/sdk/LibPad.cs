@@ -4,13 +4,11 @@ using RecompOne.Runtime.Host;
 using RecompOne.Runtime.Memory;
 
 namespace RecompOne.Runtime.Sdk;
-
-//silent hill doesnt deal very well with recompiled libpad so hle it, using dualshock
 public static class LibPad
 {
     const byte Connected = 0x00;
     const byte Disconnected = 0xFF;
-    const byte AnalogId = 0x73;
+    const byte DigitalId = 0x41;
     const uint PadStateDiscon = 0;
     const uint PadStateStable = 6;
 
@@ -35,7 +33,8 @@ public static class LibPad
 
     public static void PadChkMtap(CpuContext c, IMemory m) => c.V0 = 0;
 
-    public static void PadGetState(CpuContext c, IMemory m) => c.V0 = IsPort1(c.A0) ? PadStateStable : PadStateDiscon;
+    public static void PadGetState(CpuContext c, IMemory m)
+        => c.V0 = IsPort1(c.A0) || Controller.Connected2 ? PadStateStable : PadStateDiscon;
 
     public static void PadInfoMode(CpuContext c, IMemory m) => c.V0 = 0;
     public static void PadInfoComb(CpuContext c, IMemory m) => c.V0 = 0;
@@ -49,6 +48,7 @@ public static class LibPad
 
     public static void PadSetActAlign(CpuContext c, IMemory m)
     {
+        if (!IsPort1(c.A0)) { c.V0 = 1; return; }
         uint ptr = c.A1;
         uint len = c.A2;
         if (ptr == 0 || len < 2) { c.V0 = 0; return; }
@@ -63,6 +63,7 @@ public static class LibPad
 
     public static void PadSetAct(CpuContext c, IMemory m)
     {
+        if (!IsPort1(c.A0)) { c.V0 = 1; return; }
         uint ptr = c.A1;
         uint len = c.A2;
         if (ptr == 0 || len == 0) { c.V0 = 0; return; }
@@ -74,21 +75,23 @@ public static class LibPad
 
     public static void Refresh(IMemory m)
     {
-        if (_buf1 != 0) WritePad(m, _buf1, Controller.State, true);
-        if (_buf2 != 0) WritePad(m, _buf2, 0xFFFF, false);
+        if (_buf1 != 0) WritePad(m, _buf1, Controller.State, true,
+            Controller.RightX, Controller.RightY, Controller.LeftX, Controller.LeftY);
+        if (_buf2 != 0) WritePad(m, _buf2, Controller.State2, Controller.Connected2,
+            Controller.RightX2, Controller.RightY2, Controller.LeftX2, Controller.LeftY2);
     }
 
     static bool IsPort1(uint port) => (port & 0x10u) == 0;
 
-    static void WritePad(IMemory m, uint buf, ushort buttons, bool present)
+    static void WritePad(IMemory m, uint buf, ushort buttons, bool present, byte rx, byte ry, byte lx, byte ly)
     {
         m.WriteU8(buf + 0, present ? Connected    : Disconnected);
-        m.WriteU8(buf + 1, present ? AnalogId     : Disconnected);
+        m.WriteU8(buf + 1, present ? DigitalId    : Disconnected);
         m.WriteU8(buf + 2, (byte)(buttons & 0xFF));
         m.WriteU8(buf + 3, (byte)(buttons >> 8));
-        m.WriteU8(buf + 4, present ? Controller.RightX : (byte)0x80);
-        m.WriteU8(buf + 5, present ? Controller.RightY : (byte)0x80);
-        m.WriteU8(buf + 6, present ? Controller.LeftX  : (byte)0x80);
-        m.WriteU8(buf + 7, present ? Controller.LeftY  : (byte)0x80);
+        m.WriteU8(buf + 4, present ? rx : (byte)0x80);
+        m.WriteU8(buf + 5, present ? ry : (byte)0x80);
+        m.WriteU8(buf + 6, present ? lx : (byte)0x80);
+        m.WriteU8(buf + 7, present ? ly : (byte)0x80);
     }
 }

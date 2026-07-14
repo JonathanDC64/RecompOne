@@ -11,7 +11,7 @@ internal sealed class InputSettingsSection : ISettingsSection
     public string Title => "Input";
     public int Order => 0;
 
-    static readonly (string Label, Func<KeyBindings, string> GetKey, Action<KeyBindings, string> SetKey, Func<GamepadBindings, int> GetPad, Action<GamepadBindings, int> SetPad)[] _rows =
+    static readonly (string Label, Func<KeyBindings, string> GetKey, Action<KeyBindings, string> SetKey, Func<GamepadBindings, int[]> GetPad, Action<GamepadBindings, int[]> SetPad)[] _rows =
     [
         ("Cross", b => b.Cross, (b,v) => b.Cross = v, p => p.Cross, (p,v) => p.Cross = v),
         ("Circle", b => b.Circle, (b,v) => b.Circle = v, p => p.Circle, (p,v) => p.Circle = v),
@@ -32,14 +32,18 @@ internal sealed class InputSettingsSection : ISettingsSection
     ];
 
     bool _gamepadMode;
+    int _padIndex;
     int _remapRow = -1;
+    bool _remapAdd;
 
     public void Draw()
     {
         DrawDeviceSelector();
         ImGui.Spacing();
+        DrawPadSelector();
+        ImGui.Spacing();
 
-        if (_gamepadMode && !InputManager.IsConnected)
+        if (_gamepadMode && !InputManager.IsPadConnected(_padIndex))
         {
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.75f, 0.3f, 1f));
             ImGui.TextUnformatted("No gamepad connected.");
@@ -52,8 +56,16 @@ internal sealed class InputSettingsSection : ISettingsSection
         ImGui.Spacing();
         if (ImGui.Button("Reset to Defaults"))
         {
-            if (_gamepadMode) ConfigManager.Game.Pad = new GamepadBindings();
-            else ConfigManager.Game.Keys = new KeyBindings();
+            if (!_gamepadMode)
+            {
+                if (_padIndex == 0) ConfigManager.Game.Keys = new KeyBindings();
+                else ConfigManager.Game.Keys2 = KeyBindings.Empty();
+            }
+            else
+            {
+                if (_padIndex == 0) ConfigManager.Game.Pad = new GamepadBindings();
+                else ConfigManager.Game.Pad2 = GamepadBindings.Empty();
+            }
             _remapRow = -1;
             ConfigManager.SaveGame();
         }
@@ -79,6 +91,26 @@ internal sealed class InputSettingsSection : ISettingsSection
         }
     }
 
+    void DrawPadSelector()
+    {
+        if (ImGui.BeginTabBar("##input-pad"))
+        {
+            if (ImGui.BeginTabItem("Pad 1"))
+            {
+                if (_padIndex != 0) _remapRow = -1;
+                _padIndex = 0;
+                ImGui.EndTabItem();
+            }
+            if (ImGui.BeginTabItem("Pad 2"))
+            {
+                if (_padIndex != 1) _remapRow = -1;
+                _padIndex = 1;
+                ImGui.EndTabItem();
+            }
+            ImGui.EndTabBar();
+        }
+    }
+
     void DrawBindings()
     {
         if (!ImGui.BeginTable("##bindings", 2,
@@ -89,8 +121,8 @@ internal sealed class InputSettingsSection : ISettingsSection
         ImGui.TableSetupColumn(_gamepadMode ? "Gamepad" : "Keyboard", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableHeadersRow();
 
-        var keys = ConfigManager.Game.Keys;
-        var pad = ConfigManager.Game.Pad;
+        var keys = _padIndex == 0 ? ConfigManager.Game.Keys : ConfigManager.Game.Keys2;
+        var pad = _padIndex == 0 ? ConfigManager.Game.Pad : ConfigManager.Game.Pad2;
 
         for (int i = 0; i < _rows.Length; i++)
         {
@@ -105,17 +137,44 @@ internal sealed class InputSettingsSection : ISettingsSection
 
             if (_gamepadMode)
             {
-                var text = awaiting ? "[press button...]" : $"{PadLabel(getPad(pad))}##p{i}";
-                if (ImGui.Button(text, new Vector2(-1, 0))) _remapRow = i;
+                var bindings = getPad(pad);
+                string text = awaiting
+                    ? _remapAdd ? "[press button to add...]" : "[press button...]"
+                    : bindings.Length == 0 ? "unbound" : string.Join(" | ", bindings.Select(PadLabel));
+
+                float plusW = ImGui.GetFrameHeight();
+                float spacing = ImGui.GetStyle().ItemSpacing.X;
+                if (ImGui.Button($"{text}##p{i}", new Vector2(-plusW - spacing, 0)))
+                {
+                    _remapRow = i;
+                    _remapAdd = false;
+                }
+                ImGui.SameLine();
+                if (ImGui.Button($"+##add{i}", new Vector2(plusW, 0)))
+                {
+                    _remapRow = i;
+                    _remapAdd = true;
+                }
+
                 if (awaiting)
                 {
-                    var p = InputManager.GetFirstPressedPadButton();
-                    if (p.HasValue) { setPad(pad, p.Value); _remapRow = -1; ConfigManager.SaveGame(); }
+                    var p = InputManager.GetFirstPressedPadButton(_padIndex);
+                    if (p.HasValue)
+                    {
+                        if (_remapAdd)
+                        {
+                            if (!bindings.Contains(p.Value)) setPad(pad, [.. bindings, p.Value]);
+                        }
+                        else setPad(pad, [p.Value]);
+                        _remapRow = -1;
+                        ConfigManager.SaveGame();
+                    }
                 }
             }
             else
             {
-                var text = awaiting ? "[press key...]" : $"{getKey(keys)}##k{i}";
+                var key = getKey(keys);
+                var text = awaiting ? "[press key...]" : $"{(key.Length == 0 ? "unbound" : key)}##k{i}";
                 if (ImGui.Button(text, new Vector2(-1, 0))) _remapRow = i;
                 if (awaiting)
                 {
