@@ -89,6 +89,14 @@ internal static class HostWindow
         _window.DoRender();
     }
 
+    internal static void Pump()
+    {
+        if (_headless || _window == null) return;
+        try { _window.DoEvents(); } catch { }
+        if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
+        _window.DoRender();
+    }
+
     public static void Shutdown()
     {
         if (!_headless && _window != null && !_window.IsClosing)
@@ -155,6 +163,7 @@ internal static class HostWindow
         PanelManager.Register(new ConsolePanel());
         PanelManager.Register(new OverlayEventsPanel());
         PanelManager.Register(new SettingsPopup());
+        PanelManager.Register(new Modding.ModsPopup());
         PanelManager.Register(new AboutPopup());
 
         SettingsRegistry.Register(new InputSettingsSection());
@@ -235,6 +244,7 @@ internal static class HostWindow
         DrawDockspace();
         PanelManager.DrawPanels();
         MenuRegistry.DrawWindows();
+        Modding.ModLoadingPopup.Draw();
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         gl.Viewport(0, 0, (uint)fbDef.X, (uint)fbDef.Y);
         _imgui.Render();

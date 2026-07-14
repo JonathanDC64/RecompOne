@@ -11,7 +11,7 @@ static file class PanelDefaults
     public static bool IsOpenByDefault(IPanel p) => p.Name == "Output";
 }
 
-internal static class ConfigManager
+public static class ConfigManager
 {
     static readonly JsonSerializerOptions _opts = new()
     {

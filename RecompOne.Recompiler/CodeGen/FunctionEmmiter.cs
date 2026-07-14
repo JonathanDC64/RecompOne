@@ -24,19 +24,23 @@ public static class FunctionEmitter
 
         string name = func.EmittedName;
         const string ind = "        ";
+        const string noInline = "    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]";
 
         if (func.IsStub)
         {
+            sb.AppendLine(noInline);
             sb.AppendLine($"    public static void {name}(CpuContext c, IMemory m) {{ }}");
             return sb.ToString();
         }
         if (func.IsPatch)
         {
+            sb.AppendLine(noInline);
             sb.AppendLine($"    public static void {name}(CpuContext c, IMemory m) => {func.PatchTarget}(c, m);");
             return sb.ToString();
         }
         if (func.PostHookTarget.Length > 0)
         {
+            sb.AppendLine(noInline);
             sb.AppendLine($"    public static void {name}(CpuContext c, IMemory m)");
             sb.AppendLine("    {");
             sb.AppendLine($"        {name}_Impl(c, m);");
@@ -45,6 +49,7 @@ public static class FunctionEmitter
             name += "_Impl";
         }
 
+        sb.AppendLine(noInline);
         sb.AppendLine($"    public static void {name}(CpuContext c, IMemory m)");
         sb.AppendLine("    {");
         if (func.PreHookTarget.Length > 0)

@@ -7,8 +7,9 @@ internal static class MainMenuBar
 {
     public static void Draw()
     {
-     
+
         ConfigMenu();
+        ModsMenu();
         DebugMenu();
         HelpMenu();
         MenuRegistry.DrawMenus();
@@ -44,6 +45,16 @@ internal static class MainMenuBar
             ImGui.EndMenu();
         }
     }
+    static void ModsMenu()
+    {
+        if (!ImGui.BeginMenu("Mods")) return;
+
+        if (ImGui.MenuItem("Mods..."))
+            if (PanelManager.Get<Modding.ModsPopup>() is { } popup) popup.IsOpen = true;
+
+        ImGui.EndMenu();
+    }
+
     static void DebugMenu()
     {
         if (!ImGui.BeginMenu("Debug")) return;

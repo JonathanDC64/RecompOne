@@ -21,6 +21,8 @@ public static class Dispatcher
     {
         get { lock (_active) return _active.ToArray(); }
     }
+    
+    public static IReadOnlyDictionary<string, IOverlay> Overlays => _registry;
 
     public static void LoadByLba(int lba)
     {

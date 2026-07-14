@@ -27,6 +27,7 @@ public static class EntryWriter
         entry.AppendLine("        m.SetCd(cd);");
         foreach (var name in overlays)
             entry.AppendLine($"        Dispatcher.Register(\"{name}\", new {DispatchTableName(name)}());");
+        entry.AppendLine("        RecompOne.Runtime.Modding.ModLoader.LoadAll();");
         entry.AppendLine($"        cd.LoadToMemory(\"{bootExe}\", 0x{exe.Destination:X8}u, 0x800, {exe.TextSize});");
         entry.AppendLine("        Dispatcher.Load(\"main\");");
         entry.AppendLine("        var c = new CpuContext();");
