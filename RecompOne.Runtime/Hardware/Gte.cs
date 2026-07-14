@@ -135,9 +135,9 @@ public static class Gte
 
     static void Modulate(int sf, bool lm)
     {
-        SetMac(1, ((long)RGBC_R * IR1) << 4, 0, lm);
-        SetMac(2, ((long)RGBC_G * IR2) << 4, 0, lm);
-        SetMac(3, ((long)RGBC_B * IR3) << 4, 0, lm);
+        SetMac(1, ((long)RGBC_R * IR1) << 4, sf, lm);
+        SetMac(2, ((long)RGBC_G * IR2) << 4, sf, lm);
+        SetMac(3, ((long)RGBC_B * IR3) << 4, sf, lm);
         PushColor();
     }
 
