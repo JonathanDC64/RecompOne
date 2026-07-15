@@ -14,6 +14,7 @@ public sealed class CdController
     private readonly Queue<byte> _responseFifo = new();
     private readonly Queue<(byte irqType, byte[] response)> _pendingIrqs = new();
     private byte _irqFlags;
+    private byte _lastMode;
     private int _seekLba;
     private byte[] _dataBuf = new byte[2048];
 
@@ -252,7 +253,7 @@ public sealed class CdController
                 QueueIrq(3, [DriveStatus()]);
                 break;
             case 0x0E: // set mode
-                if (prms.Count > 0) Console.WriteLine($"[cd] Setmode 0x{prms[0]:X2}");
+                if (prms.Count > 0) { _lastMode = prms[0]; Console.WriteLine($"[cd] Setmode 0x{prms[0]:X2}"); }
                 QueueIrq(3, [DriveStatus()]);
                 break;
             case 0x15: // seek L
@@ -351,9 +352,15 @@ public sealed class CdController
         Runtime.OnOverlayDma(addr); // activate a runtime-loaded code overlay if this DMA targets its base
         for (uint i = 0; i < byteCount; i++)
             m.WriteU8(addr + i, _dataFifoPos < _dataBuf.Length ? _dataBuf[_dataFifoPos++] : (byte)0);
-        if (_dataFifoPos >= _dataBuf.Length) _dataReady = false;
-        _sectorConsumed = true; // game read this sector
-        AdvanceStreaming();     // deliver next now if the game already acked (handles ack-before-DMA order)
+        // Only consider the sector consumed (and advance the read) once its whole
+        // FIFO is drained. Streaming reads pull a sector in small chunks (e.g. STR
+        // in 32-byte DMAs); advancing after a partial read would skip most of it.
+        if (_dataFifoPos >= _dataBuf.Length)
+        {
+            _dataReady = false;
+            _sectorConsumed = true; // game read this sector
+            AdvanceStreaming();     // deliver next now if the game already acked (ack-before-DMA order)
+        }
     }
 
     public void LoadSectorToFifo(byte[] data)

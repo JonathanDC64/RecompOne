@@ -54,6 +54,11 @@ public static class Runtime
         if (Mem != null) { Bios.BiosB.RefreshPad(Mem); Sdk.LibPad.Refresh(Mem); } //is this correct?
         DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
         PumpCdIsr();
+        // Fire the psyq vblank event (RootCounter 3, EvSpINT) each frame so games
+        // that registered an EvMdINTR vblank handler get ticked — e.g. KF2's frame
+        // pacing counter, which world-build waits on.
+        if (Mem != null && Cpu != null)
+            Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
     }
 
     // The game registers a CD interrupt handler that its real CdInit would hook; we
