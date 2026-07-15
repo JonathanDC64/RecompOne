@@ -17,6 +17,7 @@ public static class BiosB
     public static uint IntrEnvInInterruptAddr = 0u;
 
     static uint _padBuf;
+    static ushort _dbgLastPad = 0xFFFF;
 
     public static void DeliverEvent(uint @class, uint spec)
     {
@@ -87,7 +88,12 @@ public static class BiosB
     static void PadRead(IMemory m)
     {
         if (_padBuf == 0) return;
-        ushort s = Hardware.Controller.State;
+        // Capture host input even when the game busy-polls the pad without
+        // yielding to VSync (common on "Press Start" / menu waits).
+        RecompOne.Runtime.Host.HostWindow.PumpInput();
+        // active-low: a button is pressed if the keyboard OR the bot injects it
+        ushort s = (ushort)(Hardware.Controller.State & RecompOne.Runtime.Host.BotControl.InjectMask);
+        if (s != _dbgLastPad) { _dbgLastPad = s; Console.WriteLine($"[pad] state=0x{s:X4} pressed=0x{(ushort)~s:X4}"); }
         ushort swapped = (ushort)((s >> 8) | (s << 8));
         m.WriteU32(_padBuf,     0xFFFF0000u | swapped);
         m.WriteU8(_padBuf + 4, Hardware.Controller.RightX);

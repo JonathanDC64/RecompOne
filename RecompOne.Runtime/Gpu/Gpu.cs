@@ -149,7 +149,7 @@ public sealed partial class Gpu
             case 0x00: Reset(); break;
             case 0x01: _fifo.Clear(); _polyline = false; _loadImage = false; break;
             case 0x02: break;
-            case 0x03: _displayDisabled = (p & 1) != 0; break;
+            case 0x03: _displayDisabled = (p & 1) != 0; Console.WriteLine($"[gp1] display-enable cmd p=0x{p:X} -> {(_displayDisabled ? "OFF" : "ON")}"); break;
             case 0x04: _dmaDir = (int)(p & 3); break;
             case 0x10: SetGpuInfo(p); break;
         }

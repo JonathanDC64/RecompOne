@@ -4,3 +4,35 @@ obj/
 riderModule.iml
 /_ReSharper.Caches/
 .idea/
+
+# --- KF2 recomp: game-specific project lives in the KingsField2Recomp repo ---
+# Kept out of the engine fork; it also holds copyrighted/derived material.
+kf2/
+
+# --- Never commit copyrighted material (supply your own dumps) ---
+# PS1 BIOS
+*.BIN
+*.bin
+# Disc images
+*.cue
+*.iso
+*.img
+*.bin.ecm
+# Game executables / overlays (PS-EXE)
+*.EXE
+*.exe
+SLUS_*
+SCPH*
+# Recompiled/decompiled output (machine translation of copyrighted code)
+Recompiled/
+*_full.c
+*_funcmap.json
+# Extracted game assets
+*.TIM
+*.TMD
+*.VAB
+*.SEQ
+*.T
+# Memory-card saves
+*.sav
+*.mcr

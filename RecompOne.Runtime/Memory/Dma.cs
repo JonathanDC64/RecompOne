@@ -110,6 +110,7 @@ public sealed class Dma
 
     void TransferCd(uint madr, uint bcr)
     {
+        RecompOne.Runtime.Log.Cd($"DMA-CD madr=0x{madr:X8} bytes={WordCount(bcr) * 4u}");
         if (_cd == null) return;
         _cd.DmaReadData(_mem, madr, WordCount(bcr) * 4u);
     }

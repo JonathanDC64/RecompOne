@@ -105,6 +105,10 @@ public static class LibGpu
         gpu.WriteGp1(mode);
 
         GpuHle.NotifyDisplay(dispX, dispY, dispW, dispH);
+        // Ensure the display is enabled. The game's SetDispMask(1) (GP1 0x03) does
+        // not reach the GPU under recompilation; setting up a display env means the
+        // game wants output visible, so enable it here.
+        gpu.WriteGp1(0x03000000u);
         c.V0 = c.A0;
     }
 

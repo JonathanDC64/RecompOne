@@ -23,6 +23,69 @@ public static class BiosA
     static List<(string name, int size)> _ff = new();
     static int _ffIdx;
 
+    static int _openLoadCount;
+
+    static uint ReadLE(byte[] b, int o) =>
+        (uint)(b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24));
+
+    // A0:0x42 Load(char *filename, struct EXEC *header)
+    // Reads a PS-EXE from the disc, copies its header into the caller's EXEC
+    // struct, loads the text section into RAM (which auto-activates the matching
+    // overlay via LoadToMemory), and returns 1 on success (0 on failure).
+    static uint Load(CpuContext c, IMemory m)
+    {
+        if (_cd == null) return 0u;
+        string raw = Bios.ReadString(m, c.A0);
+        string name = CdUtils.ExtractFileName(raw);
+        Console.WriteLine($"[Bios] Load called: A0=0x{c.A0:X8} raw='{raw}' name='{name}' hdr(A1)=0x{c.A1:X8}");
+        byte[] data;
+        try { data = _cd.Fs.ReadFile(name); }
+        catch { Console.WriteLine($"[Bios] Load: file not found: '{raw}' -> '{name}'"); return 0u; }
+        if (data.Length < 0x800)
+        {
+            Console.WriteLine($"[Bios] Load: '{name}' too small ({data.Length} bytes)");
+            return 0u;
+        }
+        uint hdr = c.A1;
+        // PS-EXE header: pc0,gp0,t_addr,t_size,d_addr,d_size,b_addr,b_size,s_addr,s_size
+        // live at file offset 0x10..0x38 -> copy into EXEC struct at header ptr.
+        for (uint i = 0; i < 0x28u; i++)
+            m.WriteU8(hdr + i, data[0x10 + i]);
+        uint tAddr = ReadLE(data, 0x18);
+        uint tSize = ReadLE(data, 0x1C);
+        _cd.LoadToMemory(name, tAddr, 0x800, (int)tSize);
+        // GAME.EXE drives the CD via an interrupt-driven stream queue; its ISR is
+        // func_80062488. Register it so PresentFrame can pump it while GAME waits
+        // (its real CdInit that would hook the interrupt is redirected to LibCd).
+        if (name.ToUpperInvariant().Contains("GAME")) Runtime.CdIsrAddr = 0x80062488u;
+        else Runtime.CdIsrAddr = 0u; // OPEN/END use high-level LibCd, no hardware ISR
+        Console.WriteLine($"[Bios] Load: '{name}' pc0=0x{ReadLE(data, 0x10):X8} t_addr=0x{tAddr:X8} t_size=0x{tSize:X8} activeOverlays=[{string.Join(",", Dispatcher.ActiveNames)}]");
+        return 1u;
+    }
+
+    // A0:0x43 Exec(struct EXEC *header, int argc, char **argv)
+    // Sets up gp/sp from the EXEC header and transfers control to pc0.
+    static uint Exec(CpuContext c, IMemory m)
+    {
+        uint hdr = c.A0;
+        uint pc0 = m.ReadU32(hdr + 0x00u);
+        uint gp0 = m.ReadU32(hdr + 0x04u);
+        uint sAddr = m.ReadU32(hdr + 0x20u);
+        uint sSize = m.ReadU32(hdr + 0x24u);
+        // Save the caller's (loader's) context: Exec must be transparent so the
+        // loader resumes with its own GP/SP/RA/callee-saved regs after the program
+        // returns (otherwise its post-Exec handoff read uses the program's GP).
+        var caller = c.Snapshot();
+        c.GP = gp0;
+        if (sAddr != 0u) { c.SP = sAddr + sSize; c.FP = c.SP; }
+        else if (c.SP == 0u) { c.SP = 0x801FFFF0u; c.FP = c.SP; }
+        Console.WriteLine($"[Bios] Exec called: pc0=0x{pc0:X8} gp=0x{gp0:X8} sp=0x{c.SP:X8} handoff-before=0x{m.ReadU8(0x800102F0u):X2} overlays=[{string.Join(",", Dispatcher.ActiveNames)}]");
+        Dispatcher.Call(c, m, pc0);
+        Console.WriteLine($"[Bios] Exec returned: progRetV0=0x{c.V0:X8} handoff-after=0x{m.ReadU8(0x800102F0u):X2}");
+        c.Restore(caller);
+        return 1u;
+    }
+
     public static MemoryCard? CardFor(string path)
     {
         if (path.StartsWith("bu00:", StringComparison.OrdinalIgnoreCase)) return Runtime.CardA.Enabled ? Runtime.CardA : null;
@@ -346,8 +409,8 @@ public static class BiosA
             case 0x3F: Console.Write(Bios.FormatString(m, c, Bios.ReadString(m, c.A0))); c.V0 = 0u; break;
             case 0x40: throw new Exception("BIoS A(40h) SystemErrorUnresolvedException");
             case 0x41: c.V0 = 0u; break;
-            case 0x42: c.V0 = 0u; break;
-            case 0x43: c.V0 = 0u; break;
+            case 0x42: c.V0 = Load(c, m); break;   // Load(filename, EXEC* header)
+            case 0x43: c.V0 = Exec(c, m); break;   // Exec(EXEC* header, argc, argv)
             case 0x44: break;
             case 0x45: break;
             case 0x46: case 0x47: case 0x48: case 0x49:

@@ -108,6 +108,7 @@ public static class LibCdStream
         if (!InUse) return;
         _pendingLba = lba;
         _reading = true;
+        _active = true; // auto-activate: some games fold StSetStream into a combined stream-start fn
         EnsureThread();
     }
 
