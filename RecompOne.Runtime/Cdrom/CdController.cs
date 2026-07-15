@@ -348,7 +348,7 @@ public sealed class CdController
     static long _dbgDma;
     public void DmaReadData(IMemory m, uint addr, uint byteCount)
     {
-        if (_lastReadLba >= 12586 && _lastReadLba <= 12605 && _dbgDma++ < 60) Console.WriteLine($"[dma] -> 0x{addr:X8} sector-lba={_lastReadLba} bytes={byteCount}");
+        Runtime.OnOverlayDma(addr); // activate a runtime-loaded code overlay if this DMA targets its base
         for (uint i = 0; i < byteCount; i++)
             m.WriteU8(addr + i, _dataFifoPos < _dataBuf.Length ? _dataBuf[_dataFifoPos++] : (byte)0);
         if (_dataFifoPos >= _dataBuf.Length) _dataReady = false;
@@ -382,7 +382,7 @@ public sealed class CdController
         {
             _dataBuf = _fs.ReadSector(_seekLba);
             _dataFifoPos = 0; // new sector replaces the data FIFO: read from the start
-            if (_seekLba >= 12586 && _seekLba <= 12605 && _dbgReadN++ < 60) Console.WriteLine($"[read] lba={_seekLba} pending={_streamPending} consumed={_sectorConsumed} irq={_irqFlags}");
+            _dataReady = true; // a fresh sector is available (poll-based CdReady reads depend on this)
             DbgReadRun("read", _seekLba);
             _lastReadLba = _seekLba;
             _sectorsRead++;

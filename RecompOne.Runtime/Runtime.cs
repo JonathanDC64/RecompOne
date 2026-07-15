@@ -88,6 +88,19 @@ public static class Runtime
             Interrupts.Deliver(irq, Cpu, Mem);
     }
 
+    // Auto-activated overlays: code loaded to RAM at runtime from a data file
+    // (e.g. a game's per-map code overlays). The game recompiles them as normal
+    // overlays; the runtime activates the matching one when its base address is
+    // DMA'd, so the recompiled functions become dispatchable. A game registers
+    // (loadBaseAddress -> overlayName) up front.
+    static readonly System.Collections.Generic.Dictionary<uint, string> _autoOverlays = new();
+    public static void RegisterAutoOverlay(uint baseAddr, string overlayName) => _autoOverlays[baseAddr] = overlayName;
+    public static void OnOverlayDma(uint destAddr)
+    {
+        if (_autoOverlays.Count != 0 && _autoOverlays.TryGetValue(destAddr, out var name))
+            Dispatch.Dispatcher.Load(name); // (re)activates; swaps out any overlay at the same base
+    }
+
     public static void Shutdown()
     {
         Audio.Shutdown();
