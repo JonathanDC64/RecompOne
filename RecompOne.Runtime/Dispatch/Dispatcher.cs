@@ -160,7 +160,22 @@ public static class Dispatcher
     {
         if (BiosKernel.TryDispatch(c, m, addr)) return;
         if (!_funcMap.TryGetValue(addr, out var fn))
-            throw new InvalidOperationException($"unmapped call: 0x{addr:X8}");
+        {
+            // Games place trivial default handlers in RAM (e.g. KF2 fills its
+            // entity vtables with `jr $ra` stubs and patches real handlers in
+            // later). Execute those directly instead of failing.
+            uint w0 = m.ReadU32(addr), w1 = m.ReadU32(addr + 4u);
+            if (w0 == 0x03E00008u)
+            {
+                if (w1 == 0u) return;                                  // jr $ra; nop
+                if ((w1 & 0xFFFF0000u) == 0x24020000u)                 // jr $ra; addiu $v0, $zero, imm
+                { c.V0 = (uint)(short)(w1 & 0xFFFFu); return; }
+                if (w1 == 0x00001021u) { c.V0 = 0u; return; }          // jr $ra; move $v0, $zero
+            }
+            var sb = new System.Text.StringBuilder();
+            for (uint i = 0; i < 8; i++) sb.Append($"{m.ReadU32(addr + i * 4u):X8} ");
+            throw new InvalidOperationException($"unmapped call: 0x{addr:X8} mem=[{sb}]");
+        }
         fn(c, m);
     }
 

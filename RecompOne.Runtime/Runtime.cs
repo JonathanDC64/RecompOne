@@ -65,11 +65,15 @@ public static class Runtime
     public static void PumpCdIsr()
     {
         if (CdIsrAddr == 0 || Cpu == null || Mem == null || Cd == null) return;
-        if ((Cd.HasPendingIrq || (++_pumpFrame % 120 == 0)) && _pumpLog < 30)
+        if ((Cd.HasPendingIrq || (++_pumpFrame % 60 == 0)) && _pumpLog < 200)
         {
             uint wr = Mem.ReadU32(0x801C1724u), rd = Mem.ReadU32(0x801C1728u);
             byte st = rd != 0 ? Mem.ReadU8(rd) : (byte)0xEE;
-            System.Console.WriteLine($"[pump] pendingIrq={Cd.HasPendingIrq} wr=0x{wr:X8} rd=0x{rd:X8} entryState=0x{st:X2}");
+            byte sub = rd != 0 ? Mem.ReadU8(rd + 0x10u) : (byte)0xEE;
+            byte status = Mem.ReadU8(0x80082CD8u);
+            uint cb0 = Mem.ReadU32(0x80082A20u), cb1 = Mem.ReadU32(0x80082A24u), cb2 = Mem.ReadU32(0x80082A28u);
+            uint b0 = Mem.ReadU32(0x801C17A4u), b1 = Mem.ReadU32(0x801C17A8u), b2 = Mem.ReadU32(0x801C17ACu), b3 = Mem.ReadU32(0x801C17B0u);
+            System.Console.WriteLine($"[pump] wr=0x{wr:X8} rd=0x{rd:X8} state=0x{st:X2} sub=0x{sub:X2} cdStatus=0x{status:X2} blob=0x{b0:X8},0x{b1:X8},0x{b2:X8},0x{b3:X8}");
             _pumpLog++;
         }
         if (!Cd.HasPendingIrq) return;

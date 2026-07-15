@@ -115,7 +115,10 @@ public static class BiosB
             case 0x04: break;
             case 0x05: break;
             case 0x06: break;
-            case 0x07: DeliverEvent(c.A0, c.A1); break;
+            // DeliverEvent must invoke EvMdINTR callbacks (games register event
+            // handlers, e.g. KF2's CD stream-queue advancer on HwCdRom EvSpCOMP);
+            // the polling-only DeliverEvent would leave those handlers never run.
+            case 0x07: DeliverEventIntr(c, m, c.A0, c.A1); break;
             case 0x08: c.V0 = OpenEvent(c.A0, c.A1, c.A2, c.A3); break;
             case 0x09: CloseEvent(c.A0); c.V0 = 1u; break;
             case 0x0A: c.V0 = WaitEvent(c.A0); break;

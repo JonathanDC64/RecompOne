@@ -348,7 +348,7 @@ public sealed class CdController
     static long _dbgDma;
     public void DmaReadData(IMemory m, uint addr, uint byteCount)
     {
-        if (((_lastReadLba >= 490 && _lastReadLba <= 505) || (_lastReadLba >= 14080 && _lastReadLba <= 14150)) && _dbgDma++ < 40) Console.WriteLine($"[dma] -> 0x{addr:X8} sector-lba={_lastReadLba} bytes={byteCount}");
+        if (_lastReadLba >= 12586 && _lastReadLba <= 12605 && _dbgDma++ < 60) Console.WriteLine($"[dma] -> 0x{addr:X8} sector-lba={_lastReadLba} bytes={byteCount}");
         for (uint i = 0; i < byteCount; i++)
             m.WriteU8(addr + i, _dataFifoPos < _dataBuf.Length ? _dataBuf[_dataFifoPos++] : (byte)0);
         if (_dataFifoPos >= _dataBuf.Length) _dataReady = false;
@@ -382,7 +382,7 @@ public sealed class CdController
         {
             _dataBuf = _fs.ReadSector(_seekLba);
             _dataFifoPos = 0; // new sector replaces the data FIFO: read from the start
-            if (((_seekLba >= 490 && _seekLba <= 505) || (_seekLba >= 14080 && _seekLba <= 14150)) && _dbgReadN++ < 40) Console.WriteLine($"[read] lba={_seekLba} pending={_streamPending} consumed={_sectorConsumed} irq={_irqFlags}");
+            if (_seekLba >= 12586 && _seekLba <= 12605 && _dbgReadN++ < 60) Console.WriteLine($"[read] lba={_seekLba} pending={_streamPending} consumed={_sectorConsumed} irq={_irqFlags}");
             DbgReadRun("read", _seekLba);
             _lastReadLba = _seekLba;
             _sectorsRead++;
