@@ -103,10 +103,25 @@ public static class LibCdStream
 
     public static void StGetBackloc(CpuContext c, IMemory m) { c.V0 = 0xFFFFFFFFu; Log.Sdk("StGetBackloc"); }
 
-    internal static void OnReadStream(int lba)
+    static double _rate = -1; // sectors/sec override (from the hardware CD path); -1 = use LibCd's mode
+
+    internal static void OnReadStream(int lba, double sectorsPerSecond = -1)
     {
         if (!InUse) return;
+        _rate = sectorsPerSecond;
         _pendingLba = lba;
+        // A ReadS is a stream (re)start: drop any previous stream position so the
+        // loop picks up the new LBA and repaces from now. Without this a second
+        // movie resumes the first one's position with a long-elapsed clock, so the
+        // pacing gate always passes (the "old intro resumes, sped-up" bug).
+        lock (_lock)
+        {
+            _streamLba = -1;
+            _ready.Clear();                                  // stale frames of the old stream
+            if (_busy.Length > 0) System.Array.Clear(_busy); // (game hasn't consumed them)
+            _writeIdx = 0;
+            _prevStart = -1;
+        }
         _reading = true;
         _active = true; // auto-activate: some games fold StSetStream into a combined stream-start fn
         EnsureThread();
@@ -165,7 +180,7 @@ public static class LibCdStream
             int n = Read16(sec, 14);
             if (n <= 0 || n > _slots) { _streamLba++; continue; }
 
-            double delivered = _clock.Elapsed.TotalSeconds * LibCd.SectorsPerSecond;
+            double delivered = _clock.Elapsed.TotalSeconds * (_rate > 0 ? _rate : LibCd.SectorsPerSecond);
             if ((_streamLba - _streamStartLba) + n > delivered) { Thread.Sleep(1); continue; }
 
             int start;

@@ -233,12 +233,14 @@ public sealed class CdController
             case 0x08: //Stop
                 _reading = false;
                 _streamPending = false;
+                Sdk.LibCdStream.OnStopStream();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
             case 0x09: // Pause
                 _reading = false;
                 _streamPending = false;
+                Sdk.LibCdStream.OnStopStream();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
@@ -252,6 +254,10 @@ public sealed class CdController
             case 0x0C: // demute
                 QueueIrq(3, [DriveStatus()]);
                 break;
+            case 0x0D: // set filter (XA file/channel for real-time audio routing)
+                if (prms.Count > 1) { _filterFile = prms[0]; _filterChannel = prms[1]; Console.WriteLine($"[cd] Setfilter file={prms[0]} ch={prms[1]}"); }
+                QueueIrq(3, [DriveStatus()]);
+                break;
             case 0x0E: // set mode
                 if (prms.Count > 0) { _lastMode = prms[0]; Console.WriteLine($"[cd] Setmode 0x{prms[0]:X2}"); }
                 QueueIrq(3, [DriveStatus()]);
@@ -262,6 +268,15 @@ public sealed class CdController
                 QueueIrq(2, [DriveStatus()]);
                 break;
             case 0x1B: // read s
+                if (Sdk.LibCdStream.InUse)
+                {
+                    // The ring library is HLE'd (StSetRing was called): the HLE stream
+                    // thread reads the disc + fills the ring/XA directly. No data INT1s.
+                    _reading = false;
+                    Sdk.LibCdStream.OnReadStream(_seekLba, (_lastMode & 0x80) != 0 ? 150.0 : 75.0);
+                    QueueIrq(3, [DriveStatus()]);
+                    break;
+                }
                 _reading = true;
                 _sectorConsumed = false;
                 _streamPending = false;
@@ -383,10 +398,28 @@ public sealed class CdController
     }
 
     static long _dbgReadN;
+    byte _filterFile, _filterChannel;
+
     private void ReadNextSector()
     {
         try
         {
+            // XA-ADPCM mode (Setmode bit 0x40): real-time audio sectors go to the SPU,
+            // not the data FIFO — only video/data sectors produce a data INT1. This is
+            // what STR (FMV) playback and XA music rely on. Cap the skip so a pure-audio
+            // file can't decode itself to completion inside one call.
+            if ((_lastMode & 0x40) != 0)
+            {
+                for (int guard = 0; guard < 64; guard++)
+                {
+                    var raw = _fs.ReadSectorData(_seekLba, 2336);
+                    if ((raw[2] & 0x04) == 0) break; // data/video sector -> deliver below
+                    bool pass = (_lastMode & 0x08) == 0 || (raw[0] == _filterFile && raw[1] == _filterChannel);
+                    if (pass) XaAudio.DecodeSector(raw, 8, raw[3]);
+                    _sectorsRead++;
+                    _seekLba++;
+                }
+            }
             _dataBuf = _fs.ReadSector(_seekLba);
             _dataFifoPos = 0; // new sector replaces the data FIFO: read from the start
             _dataReady = true; // a fresh sector is available (poll-based CdReady reads depend on this)

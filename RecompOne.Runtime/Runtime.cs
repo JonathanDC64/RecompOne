@@ -95,6 +95,10 @@ public static class Runtime
         Cpu.Restore(snap);
     }
 
+    // Pump host window events + input from recompiled busy-wait loops (keeps the
+    // window responsive and lets bot/screenshot commands work while the game spins).
+    public static void PumpHost() => HostWindow.PumpInput();
+
     public static void DispatchIrq(int irq)
     {
         if (Cpu != null && Mem != null)
