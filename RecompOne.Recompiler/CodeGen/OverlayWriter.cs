@@ -198,18 +198,6 @@ public static class OverlayWriter
             overlayResults.Add(new OverlayResult(overlayConfig.Name, funcs, overlayLba, ovlBase, (uint)discBin.Length, instrs));
         }
 
-        // Fold prologue-less continuation blocks back into their frame-owner so a
-        // split logical function shares one stack frame again (fixes continuation-split
-        // register corruption). Must run before knownFuncs/dispatch are built. Config
-        // functions / entry points are kept separate (they are real indirect targets).
-        var keepSeparate = new HashSet<uint> { mainExe.InitialPC };
-        if (config.Main != null) keepSeparate.Add(Convert.ToUInt32(config.Main, 16));
-        foreach (var e in config.Functions ?? []) keepSeparate.Add(Convert.ToUInt32(e.Address, 16));
-        foreach (var ov in config.Overlays ?? [])
-            foreach (var e in ov.Functions ?? []) keepSeparate.Add(Convert.ToUInt32(e.Address, 16));
-        foreach (var result in overlayResults)
-            FunctionDetector.MergeContinuations(result.Functions, result.Instructions, keepSeparate, result.Name);
-
         var allFuncs = overlayResults.SelectMany(o => o.Functions).ToList();
         ResolveCollisions(allFuncs);
         ApplyPatches(allFuncs, config.Patches);
