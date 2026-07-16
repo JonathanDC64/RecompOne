@@ -62,6 +62,7 @@ public static class Runtime
         if (Mem != null) { Bios.BiosB.RefreshPad(Mem); Sdk.LibPad.Refresh(Mem); } //is this correct?
         DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
         PumpCdIsr();
+        PumpCdDataReadyFallback();
         // Fire the psyq vblank event (RootCounter 3, EvSpINT) each frame so games
         // that registered an EvMdINTR vblank handler get ticked — e.g. KF2's frame
         // pacing counter, which world-build waits on.
@@ -93,6 +94,21 @@ public static class Runtime
         var snap = Cpu.Snapshot();
         Dispatch.Dispatcher.Call(Cpu, Mem, CdIsrAddr);
         Cpu.Restore(snap);
+    }
+
+    // Lost-INT1 recovery: if a data sector sits unconsumed with no IRQ pending, the
+    // game acked the INT1 from a poll loop before its (pumped) ISR could deliver the
+    // HwCdRom data-ready event — so the event-driven consumer never runs and the
+    // consumption-paced CD never advances (deadlock; e.g. the item-menu model load).
+    // Deliver the data-ready event ourselves, once per frame, exactly as the real
+    // ISR would have.
+    static int _drFallbackLog;
+    public static void PumpCdDataReadyFallback()
+    {
+        if (Cpu == null || Mem == null || Cd == null) return;
+        if (!Cd.DataSittingUnconsumed) return;
+        if (_drFallbackLog < 40) { System.Console.WriteLine("[cd] data-ready event fallback"); _drFallbackLog++; }
+        Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF0000003u, 0x40u);
     }
 
     // Pump host window events + input from recompiled busy-wait loops (keeps the

@@ -439,6 +439,11 @@ public sealed class CdController
     // A CD IRQ is asserted and not yet acknowledged by the game (used to pump the
     // game's CD ISR when it's waiting without polling — e.g. seek-complete between reads).
     public bool HasPendingIrq => _irqFlags != 0;
+    // A read is active and a sector sits fully unread in the FIFO while no IRQ is
+    // pending: the game acked the data INT1 (e.g. from a CdSync poll loop) before
+    // its ISR could deliver the data-ready event. On real hardware the ISR always
+    // preempts, so the event can't be lost — used by the runtime's event fallback.
+    public bool DataSittingUnconsumed => _reading && _dataReady && _dataFifoPos == 0 && _irqFlags == 0 && _pendingIrqs.Count == 0;
 
     public byte[] ReadSectorData(int lba)
     {

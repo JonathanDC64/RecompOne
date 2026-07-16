@@ -69,6 +69,24 @@ public static class BotControl
         {
             case "shot": ShotPath = p.Length > 1 ? p[1] : "shot.png"; break;
             case "vramshot": VramShotPath = p.Length > 1 ? p[1] : "vram.png"; break;
+            case "peek": // peek <hexaddr> <bytes> — hex dump RAM (debug)
+            {
+                var mem = Runtime.Mem;
+                if (mem == null || p.Length < 3) break;
+                uint a = Convert.ToUInt32(p[1], 16);
+                int n = Math.Min(int.Parse(p[2]), 256);
+                var sb = new System.Text.StringBuilder($"[peek] 0x{a:X8}:");
+                for (int i = 0; i < n; i += 4) sb.Append($" {mem.ReadU32(a + (uint)i):X8}");
+                Console.WriteLine(sb.ToString());
+                break;
+            }
+            case "regs": // dump CPU registers (debug)
+            {
+                var cpu = Runtime.Cpu;
+                if (cpu == null) break;
+                Console.WriteLine($"[regs] PC? GP=0x{cpu.GP:X8} SP=0x{cpu.SP:X8} RA=0x{cpu.RA:X8} S0=0x{cpu.S0:X8} S1=0x{cpu.S1:X8} A0=0x{cpu.A0:X8} V0=0x{cpu.V0:X8}");
+                break;
+            }
             case "hold": _held = (ushort)Convert.ToUInt16(p[1], 16); break;
             case "tap":
             case "press":

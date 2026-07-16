@@ -26,13 +26,22 @@ public static class BiosB
                 _evCBs[i].Status = 4u;
     }
     
+    static readonly bool EvLog = Environment.GetEnvironmentVariable("KF2_EVLOG") == "1";
+    static int _evLogN;
+
     public static void DeliverEventIntr(CpuContext c, IMemory m, uint @class, uint spec)
     {
+        bool log = EvLog && @class == 0xF0000003u && _evLogN < 4000;
+        int hit = 0;
         for (int i = 0; i < MaxEvents; i++)
         {
             if (_evCBs[i].Status != 2u || _evCBs[i].Class != @class || _evCBs[i].Spec != spec) continue;
+            hit++;
             if ((_evCBs[i].Mode & 0x1000u) != 0 && _evCBs[i].Func != 0u)
             {
+                // only log unusual handlers (the two world-queue ones fire constantly)
+                if (log && _evCBs[i].Func != 0x800196E8u && _evCBs[i].Func != 0x80019848u)
+                { Console.WriteLine($"[ev] cd spec=0x{spec:X} -> call 0x{_evCBs[i].Func:X8}"); _evLogN++; }
                 var snap = c.Snapshot();
                 RecompOne.Runtime.Dispatch.Dispatcher.Call(c, m, _evCBs[i].Func);
                 c.Restore(snap);
@@ -42,6 +51,7 @@ public static class BiosB
                 _evCBs[i].Status = 4u;
             }
         }
+        if (log && hit == 0) { Console.WriteLine($"[ev] cd spec=0x{spec:X} -> NO MATCH"); _evLogN++; }
     }
     
     public static void CardComplete(CpuContext c, IMemory m, uint port)
@@ -204,9 +214,12 @@ public static class BiosB
             if (_evCBs[i].Status == 0u)
             {
                 _evCBs[i] = new EvCB { Status = 1u, Class = @class, Spec = spec, Mode = mode, Func = func };
+                if (EvLog && @class == 0xF0000003u)
+                    Console.WriteLine($"[ev] OPEN slot={i} spec=0x{spec:X} mode=0x{mode:X} func=0x{func:X8}");
                 return 0xF0000000u | (uint)i;
             }
         }
+        if (EvLog) Console.WriteLine($"[ev] OPEN FAILED (table full) class=0x{@class:X8} spec=0x{spec:X}");
         return 0xFFFFFFFFu;
     }
 
@@ -219,7 +232,12 @@ public static class BiosB
     static void CloseEvent(uint ev)
     {
         int s = EvSlot(ev);
-        if (s >= 0) _evCBs[s] = default;
+        if (s >= 0)
+        {
+            if (EvLog && _evCBs[s].Class == 0xF0000003u)
+                Console.WriteLine($"[ev] CLOSE slot={s} spec=0x{_evCBs[s].Spec:X} func=0x{_evCBs[s].Func:X8}");
+            _evCBs[s] = default;
+        }
     }
 
     static uint WaitEvent(uint ev)
@@ -239,7 +257,12 @@ public static class BiosB
     static void EnableEvent(uint ev)
     {
         int s = EvSlot(ev);
-        if (s >= 0) _evCBs[s].Status = 2u;
+        if (s >= 0)
+        {
+            if (EvLog && _evCBs[s].Class == 0xF0000003u)
+                Console.WriteLine($"[ev] ENABLE slot={s} spec=0x{_evCBs[s].Spec:X} func=0x{_evCBs[s].Func:X8}");
+            _evCBs[s].Status = 2u;
+        }
     }
 
     static void DisableEvent(uint ev)
