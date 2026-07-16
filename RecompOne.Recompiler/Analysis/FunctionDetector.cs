@@ -356,6 +356,123 @@ public static class FunctionDetector
         return false;
     }
 
+    // Fold prologue-less "continuation" functions back into their frame-owner.
+    //
+    // A compiler often lays out one logical function as several contiguous blocks
+    // linked by `j`/`b` tail jumps or fall-through. Because each block is a branch
+    // target (and may carry a symbol), the detector registers them as separate
+    // functions. That splits ONE stack frame across several C# methods: the owner's
+    // prologue saves S0-S7 and the *continuation* owns the epilogue that restores
+    // them. Emitted as separate methods with their own prologue/epilogue, they
+    // re-save/restore callee-saved registers at overlapping frame slots and corrupt
+    // the caller's registers (the continuation-split reg-corruption bug).
+    //
+    // Merging the chain into a single MipsFunction makes every internal transfer an
+    // in-function `goto` sharing one frame — a single prologue/epilogue — which is
+    // exactly what the original code was. Runs per overlay, before the known-function
+    // map and dispatch table are built.
+    public static int MergeContinuations(List<MipsFunction> funcs, MipsInstruction[] all,
+                                         HashSet<uint> keepSeparate, string overlayName)
+    {
+        if (funcs.Count < 2) return 0;
+
+        // Addresses reachable independently of any single owner => never merge away.
+        var jalTargets = new HashSet<uint>();
+        var literalWords = new HashSet<uint>();  // any 32-bit value present in the image
+        foreach (var ins in all)
+        {
+            if ((ins.Word >> 26) == 3) jalTargets.Add(ins.JumpTarget); // JAL
+            literalWords.Add(ins.Word); // a function-pointer table entry disassembles to its target address
+        }
+        var jtTargets = new HashSet<uint>();
+        foreach (var f in funcs)
+            foreach (var jt in f.JumpTables)
+                foreach (var e in jt.Entries) jtTargets.Add(e);
+
+        var ordered = funcs.OrderBy(f => f.Start).ToList();
+        var removed = new HashSet<MipsFunction>();
+        int merged = 0;
+
+        foreach (var owner in ordered)
+        {
+            if (removed.Contains(owner)) continue;
+            while (true)
+            {
+                MipsFunction? cont = ordered.FirstOrDefault(g =>
+                    !removed.Contains(g) && !ReferenceEquals(g, owner) && g.Start == owner.End);
+                if (cont == null) break;
+                if (!CanMergeContinuation(owner, cont, all, jalTargets, jtTargets, literalWords, keepSeparate)) break;
+
+                owner.Instructions = owner.Instructions.Concat(cont.Instructions).ToArray();
+                owner.End = cont.End;
+                owner.JumpTables.AddRange(cont.JumpTables);
+                removed.Add(cont);
+                merged++;
+            }
+        }
+
+        if (merged > 0)
+        {
+            funcs.RemoveAll(f => removed.Contains(f));
+            Console.WriteLine($"[Recompiler] merged {merged} continuation block(s) into their owners in {overlayName}");
+        }
+        return merged;
+    }
+
+    static bool CanMergeContinuation(MipsFunction owner, MipsFunction cont, MipsInstruction[] all,
+                                     HashSet<uint> jalTargets, HashSet<uint> jtTargets,
+                                     HashSet<uint> literalWords, HashSet<uint> keepSeparate)
+    {
+        if (cont.Start != owner.End) return false;                 // must be contiguous
+        if (cont.Instructions.Any(IsPrologue)) return false;       // continuation owns no frame
+        if (jalTargets.Contains(cont.Start)) return false;         // independently called
+        if (jtTargets.Contains(cont.Start)) return false;          // jump-table target
+        if (keepSeparate.Contains(cont.Start)) return false;       // entry / config / indirect target
+        if (literalWords.Contains(cont.Start)) return false;       // address-taken (function pointer) => called indirectly
+
+        // Owner must actually flow into the continuation (fall-through or a direct
+        // branch/jump into its range) — proves it is part of the owner's control flow.
+        bool flows = FallsThroughInstrs(owner.Instructions)
+            || owner.Instructions.Any(ins => StaticTargetInRange(ins, cont.Start, cont.End));
+        if (!flows) return false;
+
+        // Single-owner: nothing OUTSIDE [owner.Start, cont.End) may target cont.Start.
+        uint lo = owner.Start, hi = cont.End;
+        foreach (var ins in all)
+        {
+            if (ins.Vram >= lo && ins.Vram < hi) continue;
+            if (StaticTarget(ins) == cont.Start) return false;
+        }
+        return true;
+    }
+
+    // Direct (statically-known) control-transfer target, or uint.MaxValue for none
+    // (register jumps jr/jalr have no static target).
+    static uint StaticTarget(MipsInstruction i)
+    {
+        if (i.IsJump) return i.JumpTarget;                          // j
+        if ((i.Word >> 26) == 3) return i.JumpTarget;               // jal
+        if (i.IsBranch && !i.IsRegisterJump) return i.BranchTarget; // conditional branch / b
+        return uint.MaxValue;
+    }
+
+    static bool StaticTargetInRange(MipsInstruction i, uint lo, uint hi)
+    {
+        uint t = StaticTarget(i);
+        return t >= lo && t < hi;
+    }
+
+    static bool FallsThroughInstrs(MipsInstruction[] instrs)
+    {
+        if (instrs.Length == 0) return false;
+        int idx = instrs.Length - 1;
+        if (instrs.Length >= 2 && instrs[idx - 1].HasDelaySlot) idx--;
+        var ctrl = instrs[idx];
+        if (ctrl.IsReturn || ctrl.IsJump || ctrl.IsRegisterJump || ctrl.IsUnconditionalBranch) return false;
+        if (ctrl.IsFunctionCall) return false;
+        return true;
+    }
+
     //shouldbe the right behaviour now? in theory
     public static HashSet<uint> ComputeRaReturnJrs(MipsFunction func)
     {
