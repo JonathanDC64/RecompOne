@@ -467,6 +467,26 @@ public sealed class GlBackend : IGpuBackend
 
     public void Present(in HleDispEnv disp) => PresentDisplay(disp.X, disp.Y, disp.W, disp.H, disp.Rgb24);
 
+    public void DumpVram(string path)
+    {
+        Flush();
+        // Write back any dirty RTs so the dump reflects true VRAM (incl. rendered buffers).
+        foreach (var rt in _rts) if (rt is { Dirty: true }) Writeback(rt);
+        int W = VramShadow.Width, H = VramShadow.Height;
+        var px = new ushort[W * H];
+        _vram.ReadRect(0, 0, W, H, px);
+        var rgb = new byte[W * H * 3];
+        for (int i = 0; i < W * H; i++)
+        {
+            ushort v = px[i];
+            rgb[i * 3] = (byte)((v & 0x1F) << 3);
+            rgb[i * 3 + 1] = (byte)(((v >> 5) & 0x1F) << 3);
+            rgb[i * 3 + 2] = (byte)(((v >> 10) & 0x1F) << 3);
+        }
+        RecompOne.Runtime.Host.BotControl.WritePng(path, W, H, rgb);
+        Console.WriteLine($"[vramshot] wrote {path} ({W}x{H})");
+    }
+
     public unsafe (uint tex, int w, int h, float aspect) PresentDisplay(int dispX, int dispY, int w, int h, bool rgb24 = false, int outW = 0, int outH = 0)
     {
         if (!Ready || w <= 0 || h <= 0) return (0, 0, 0, GpuHle.OutputAspect);

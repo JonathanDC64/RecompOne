@@ -109,7 +109,7 @@ internal static class HostWindow
         if (_headless || _window == null) return;
         // Honor a pending screenshot even while the game is stuck in a non-VSync
         // poll loop (menus, load waits) — force a render so OnRender can capture.
-        if (BotControl.ShotPath != null) { try { _window.DoRender(); } catch { } }
+        if (BotControl.ShotPath != null || BotControl.VramShotPath != null) { try { _window.DoRender(); } catch { } }
         long now = _inputPumpClock.ElapsedMilliseconds;
         if (now - _lastInputPumpMs < 2) return;
         _lastInputPumpMs = now;
@@ -277,6 +277,13 @@ internal static class HostWindow
             BotControl.ShotPath = null;
             try { CaptureScreenshot(gl, sp); }
             catch (Exception e) { Console.WriteLine($"[bot] screenshot failed: {e.Message}"); }
+        }
+
+        if (BotControl.VramShotPath is string vsp)
+        {
+            BotControl.VramShotPath = null;
+            try { RecompOne.Runtime.Hle.GpuHle.Backend?.DumpVram(vsp); }
+            catch (Exception e) { Console.WriteLine($"[bot] vramshot failed: {e.Message}"); }
         }
     }
 

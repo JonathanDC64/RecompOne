@@ -48,8 +48,32 @@ public sealed class PSMemory : IMemory
         _hwregs[o + 3] = (byte)(v >> 24);
     }
 
+    // Debug write-watch (KF2_WATCH=hexPhysStart,hexPhysEnd): print writer stack for writes in range.
+    static readonly (uint lo, uint hi)? _watch = ParseWatch();
+    static int _watchHits;
+    static (uint, uint)? ParseWatch()
+    {
+        var s = Environment.GetEnvironmentVariable("KF2_WATCH");
+        if (string.IsNullOrEmpty(s)) return null;
+        var p = s.Split(',');
+        return (Convert.ToUInt32(p[0], 16), Convert.ToUInt32(p[1], 16));
+    }
+
     private void TrackWrite(uint phys, int size)
     {
+        if (_watch is { } w && phys >= w.lo && phys < w.hi && _watchHits < 40)
+        {
+            _watchHits++;
+            var st = new System.Diagnostics.StackTrace(false);
+            string who = "?";
+            for (int i = 1; i < st.FrameCount; i++)
+            {
+                var mth = st.GetFrame(i)?.GetMethod();
+                if (mth != null && (mth.Name.StartsWith("func_") || mth.Name.StartsWith("map_fn_") || mth.Name.StartsWith("ind_")))
+                { who = mth.Name; break; }
+            }
+            Console.WriteLine($"[watch] write phys=0x{phys:X8} size={size} by {who}");
+        }
         if (phys < MemoryMap.RamWindow)
         {
             uint off = phys % (uint)_ram.Length;

@@ -25,6 +25,8 @@ public static class BotControl
 
     // screenshot request handled on the render thread (needs the GL context)
     public static volatile string? ShotPath;
+    // full-VRAM dump request (render thread)
+    public static volatile string? VramShotPath;
 
     static Thread? _thread;
     static DateTime _lastWrite;
@@ -66,6 +68,7 @@ public static class BotControl
         switch (p[0].ToLowerInvariant())
         {
             case "shot": ShotPath = p.Length > 1 ? p[1] : "shot.png"; break;
+            case "vramshot": VramShotPath = p.Length > 1 ? p[1] : "vram.png"; break;
             case "hold": _held = (ushort)Convert.ToUInt16(p[1], 16); break;
             case "tap":
             case "press":

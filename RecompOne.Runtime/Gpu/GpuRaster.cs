@@ -51,6 +51,27 @@ public sealed partial class Gpu
             }
         }
 
+        // DEBUG (env KF2_FLAT=1): force flat bright color, ignore texture — reveals
+        // that the world walls ARE drawn+projected but texture black (texture/VRAM bug).
+        if (System.Environment.GetEnvironmentVariable("KF2_FLAT") == "1")
+        {
+            for (int i = 0; i < 4; i++) { v[i].R = 200; v[i].G = 60; v[i].B = 200; }
+            tex = false;
+        }
+
+        if (DbgUp.On)
+        {
+            int loX = v[0].X, hiX = v[0].X, loY = v[0].Y, hiY = v[0].Y;
+            for (int i = 1; i < n; i++)
+            {
+                loX = Math.Min(loX, v[i].X); hiX = Math.Max(hiX, v[i].X);
+                loY = Math.Min(loY, v[i].Y); hiY = Math.Max(hiY, v[i].Y);
+            }
+            DbgUp.PolyBounds(loX, loY, hiX, hiY);
+            int sx = hiX - loX, sy = hiY - loY;
+            if (tex && sx >= 24 && sy >= 24) DbgUp.Poly(_texPageX, _texPageY, _texDepth, clut, _texWinMaskX, _texWinMaskY, _texWinOffX, _texWinOffY);
+        }
+
         if (HleOn)
         {
             HleTri(v[0], v[1], v[2], tex, semi, raw, clut);

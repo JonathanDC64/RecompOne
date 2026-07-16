@@ -26,11 +26,13 @@ public sealed partial class Gpu
         Textured = tex, SemiTrans = semi, RawTexture = raw, TPage = (ushort)CurTPage(), Clut = (ushort)clut,
     };
 
+    static readonly bool NoSpanCull = System.Environment.GetEnvironmentVariable("KF2_NOSPANCULL") == "1";
+
     void HleTri(in Vert a, in Vert b, in Vert c, bool tex, bool semi, bool raw, int clut)
     {
         int spanX = Math.Max(a.X, Math.Max(b.X, c.X)) - Math.Min(a.X, Math.Min(b.X, c.X));
         int spanY = Math.Max(a.Y, Math.Max(b.Y, c.Y)) - Math.Min(a.Y, Math.Min(b.Y, c.Y));
-        if (spanX > 1023 || spanY > 511) return;
+        if (!NoSpanCull && (spanX > 1023 || spanY > 511)) return;
 
         var be = GpuHle.Backend!;
         be.SetDrawEnv(CurEnv());

@@ -43,8 +43,16 @@ public static class Runtime
         Mem = m;
     }
 
+    static int _primFrame;
     public static void PresentFrame()
     {
+        if (++_primFrame % 60 == 0)
+        {
+            System.Console.WriteLine($"[prim] poly={DbgPrim.Poly} line={DbgPrim.Line} rect={DbgPrim.Rect} gte:rtps={Gte.DbgOp[0x01]} rtpt={Gte.DbgOp[0x30]} nclip={Gte.DbgOp[0x06]} avsz={Gte.DbgOp[0x2D] + Gte.DbgOp[0x2E]}");
+            DbgPrim.Poly = DbgPrim.Line = DbgPrim.Rect = 0;
+            DbgHit.A = DbgHit.B = DbgHit.C = DbgHit.D = DbgHit.E = DbgHit.F = 0;
+            System.Array.Clear(Gte.DbgOp);
+        }
         HostWindow.Present(Gpu);
         Audio.Attach(Spu);
         FrameClock.Throttle();
@@ -91,6 +99,16 @@ public static class Runtime
     {
         if (Cpu != null && Mem != null)
             Interrupts.Deliver(irq, Cpu, Mem);
+    }
+
+    static bool _dumpedOnce;
+    public static void DumpMem(uint addr, int len, string path)
+    {
+        if (_dumpedOnce || Mem == null) return;
+        _dumpedOnce = true;
+        var buf = new byte[len];
+        for (int i = 0; i < len; i++) buf[i] = Mem.ReadU8(addr + (uint)i);
+        try { System.IO.File.WriteAllBytes(path, buf); System.Console.WriteLine($"[dump] {path} <- 0x{addr:X8} ({len} bytes)"); } catch { }
     }
 
     // Auto-activated overlays: code loaded to RAM at runtime from a data file

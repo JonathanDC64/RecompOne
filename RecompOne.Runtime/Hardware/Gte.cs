@@ -195,8 +195,10 @@ public static class Gte
         }
     }
 
+    public static readonly int[] DbgOp = new int[64];
     public static void Execute(uint cmd)
     {
+        DbgOp[cmd & 0x3F]++;
         FLAG = 0;
         int sf = (cmd & (1u << 19)) != 0 ? 12 : 0;
         bool lm = (cmd & (1u << 10)) != 0;
