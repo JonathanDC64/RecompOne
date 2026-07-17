@@ -160,6 +160,7 @@ public sealed partial class Gpu
         DbgUp.Load(_loadX, _loadY, _loadW, _loadH);
         HleLoadBegin();
         _fifo.Clear();
+        _fifoSrc.Clear();
     }
 
     void StoreImageHalfword(ushort value)

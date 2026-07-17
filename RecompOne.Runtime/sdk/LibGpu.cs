@@ -18,7 +18,11 @@ public static class LibGpu
             uint header = m.ReadU32(addr);
             uint count = header >> 24;
             for (uint i = 0; i < count; i++)
+            {
+                Gpu.NextSrcAddr = addr + 4u + i * 4u; // PGXP: RAM address of this GP0 word
                 gpu.WriteGp0(m.ReadU32(addr + 4u + i * 4u));
+            }
+            Gpu.NextSrcAddr = 0;
             uint next = header & 0xFFFFFFu;
             if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
             addr = next & 0x1FFFFCu;

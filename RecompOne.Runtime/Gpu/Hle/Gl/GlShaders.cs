@@ -63,9 +63,12 @@ internal static class GlShaders
         layout(location = 2) in int   inClut;
         layout(location = 3) in int   inTexpage;
         layout(location = 4) in vec2  inUV;
+        layout(location = 5) in float inW;
 
         out vec4 vColor;
         out vec2 vUV;
+        noperspective out vec4 vColorA; // affine twins: fragment picks by uniform
+        noperspective out vec2 vUVA;
         flat out ivec2 clutBase;
         flat out ivec2 pageBase;
         flat out int   texMode;
@@ -76,15 +79,20 @@ internal static class GlShaders
 
         void main() {
             vec2 p = (inPos + uVertexOffset + uPosBias) * uFbInv - 1.0;
-            gl_Position = vec4(p, 0.0, 1.0);
+            // PGXP: scaling clip coords by W makes the hardware interpolate the
+            // smooth varyings perspective-correctly; W=1 = PS1-style affine. The
+            // noperspective twins always interpolate affine regardless of W.
+            gl_Position = vec4(p * inW, 0.0, inW);
 
             vColor = vec4(float(inColor & 0xFFu), float((inColor >> 8) & 0xFFu), float((inColor >> 16) & 0xFFu), 0.0) / 255.0;
+            vColorA = vColor;
 
             if ((inTexpage & 0x8000) != 0) {
                 texMode = 4;
             } else {
                 texMode = (inTexpage >> 7) & 3;
                 vUV = inUV;
+                vUVA = inUV;
                 pageBase = ivec2((inTexpage & 0xf) * 64, ((inTexpage >> 4) & 1) * 256);
                 clutBase = ivec2((inClut & 0x3f) * 16, (inClut >> 6) & 0x1ff);
             }
@@ -95,9 +103,14 @@ internal static class GlShaders
         #version 330 core
         in vec4 vColor;
         in vec2 vUV;
+        noperspective in vec4 vColorA;
+        noperspective in vec2 vUVA;
         flat in ivec2 clutBase;
         flat in ivec2 pageBase;
         flat in int   texMode;
+
+        uniform int uPctTex; // 1 = perspective-correct texture coords (PGXP)
+        uniform int uPctCol; // 1 = perspective-correct vertex colors
 
         layout(location = 0, index = 0) out vec4 FragColor;
         layout(location = 0, index = 1) out vec4 BlendColor;
@@ -122,14 +135,17 @@ internal static class GlShaders
         void main() {
             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
 
+            vec4 col = uPctCol != 0 ? vColor : vColorA;
+            vec2 uvi = uPctTex != 0 ? vUV : vUVA;
+
             if (texMode == 4) {
-                FragColor = vec4(vColor.rgb, uSetMask);
+                FragColor = vec4(col.rgb, uSetMask);
                 BlendColor = uBlend;
                 return;
             }
 
-            int rawU = dFdx(vUV.x) < 0.0 ? int(ceil(vUV.x - 0.0001)) : int(floor(vUV.x + 0.0001));
-            int rawV = dFdy(vUV.y) < 0.0 ? int(ceil(vUV.y - 0.0001)) : int(floor(vUV.y + 0.0001));
+            int rawU = dFdx(uvi.x) < 0.0 ? int(ceil(uvi.x - 0.0001)) : int(floor(uvi.x + 0.0001));
+            int rawV = dFdy(uvi.y) < 0.0 ? int(ceil(uvi.y - 0.0001)) : int(floor(uvi.y + 0.0001));
             ivec2 uv = (ivec2(rawU, rawV) & uTexWindow.xy) | uTexWindow.zw;
             uv &= ivec2(0xff);
             vec4 texel;
@@ -147,7 +163,7 @@ internal static class GlShaders
             }
 
             if (texel.rgb == vec3(0.0) && texel.a < 0.5) discard;
-            FragColor = vec4(modulate(texel, vColor).rgb, max(texel.a, uSetMask));
+            FragColor = vec4(modulate(texel, col).rgb, max(texel.a, uSetMask));
             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
         }
         """;

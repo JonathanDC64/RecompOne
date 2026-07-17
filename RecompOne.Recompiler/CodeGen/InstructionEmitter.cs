@@ -111,9 +111,9 @@ public static class InstructionEmitter
             if (((i.Word >> 25) & 1) == 1) return $"RecompOne.Runtime.Gte.Execute(0x{i.Word:X8}u);";
             return cop2rs switch
             {
-                0 => rt == 0 ? "" : $"{RT} = RecompOne.Runtime.Gte.Read({rd});",
+                0 => rt == 0 ? "" : rd is >= 12 and <= 15 ? $"{RT} = RecompOne.Runtime.Gte.Read({rd}); RecompOne.Runtime.Pgxp.RegMfc2({rt}, {rd}, {RT});" : $"{RT} = RecompOne.Runtime.Gte.Read({rd});",
                 2 => rt == 0 ? "" : $"{RT} = RecompOne.Runtime.Gte.ReadControl({rd});",
-                4 => $"RecompOne.Runtime.Gte.Write({rd}, {RT});",
+                4 => rd is >= 12 and <= 15 ? $"RecompOne.Runtime.Gte.Write({rd}, {RT}); RecompOne.Runtime.Pgxp.RegMtc2({rt}, {rd}, {RT});" : $"RecompOne.Runtime.Gte.Write({rd}, {RT});",
                 6 => $"RecompOne.Runtime.Gte.WriteControl({rd}, {RT});",
                 _ => $"/* COP2 rs={cop2rs} */"
             };
@@ -131,19 +131,19 @@ public static class InstructionEmitter
             14 => rt == 0 ? "" : $"{RT} = {RS} ^ 0x{immU:X4}u;",
             15 => rt == 0 ? "" : $"{RT} = 0x{(uint)immU << 16:X8}u;",
             32 => rt == 0 ? "" : $"{RT} = (uint)(sbyte)m.ReadU8({Addr(rs, imm)});",
-            33 => rt == 0 ? "" : $"{RT} = (uint)(short)m.ReadU16({Addr(rs, imm)});",
+            33 => rt == 0 ? "" : $"{RT} = (uint)(short)m.ReadU16({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLh({rt}, {Addr(rs, imm)}, {RT});",
             34 => rt == 0 ? "" : $"{RT} = m.ReadWordLeft({RT}, {Addr(rs, imm)});",
-            35 => rt == 0 ? "" : $"{RT} = m.ReadU32({Addr(rs, imm)});",
+            35 => rt == 0 ? "" : $"{RT} = m.ReadU32({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLw({rt}, {Addr(rs, imm)}, {RT});",
             36 => rt == 0 ? "" : $"{RT} = m.ReadU8({Addr(rs, imm)});",
-            37 => rt == 0 ? "" : $"{RT} = m.ReadU16({Addr(rs, imm)});",
+            37 => rt == 0 ? "" : $"{RT} = m.ReadU16({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLh({rt}, {Addr(rs, imm)}, {RT});",
             38 => rt == 0 ? "" : $"{RT} = m.ReadWordRight({RT}, {Addr(rs, imm)});",
             40 => $"m.WriteU8({Addr(rs, imm)}, (byte){RT});",
-            41 => $"m.WriteU16({Addr(rs, imm)}, (ushort){RT});",
+            41 => $"m.WriteU16({Addr(rs, imm)}, (ushort){RT}); RecompOne.Runtime.Pgxp.RegSh({rt}, {Addr(rs, imm)}, {RT});",
             42 => $"m.WriteWordLeft({Addr(rs, imm)}, {RT});",
-            43 => $"m.WriteU32({Addr(rs, imm)}, {RT});",
+            43 => $"m.WriteU32({Addr(rs, imm)}, {RT}); RecompOne.Runtime.Pgxp.RegSw({rt}, {Addr(rs, imm)}, {RT});",
             46 => $"m.WriteWordRight({Addr(rs, imm)}, {RT});",
-            50 => $"RecompOne.Runtime.Gte.LoadWord({rt}, m.ReadU32({Addr(rs, imm)}));",
-            58 => $"m.WriteU32({Addr(rs, imm)}, RecompOne.Runtime.Gte.StoreWord({rt}));",
+            50 => rt is >= 12 and <= 15 ? $"RecompOne.Runtime.Gte.LoadWord({rt}, m.ReadU32({Addr(rs, imm)})); RecompOne.Runtime.Pgxp.Lwc2({rt}, {Addr(rs, imm)}, m.ReadU32({Addr(rs, imm)}));" : $"RecompOne.Runtime.Gte.LoadWord({rt}, m.ReadU32({Addr(rs, imm)}));",
+            58 => rt is >= 12 and <= 15 ? $"m.WriteU32({Addr(rs, imm)}, RecompOne.Runtime.Gte.StoreWord({rt})); RecompOne.Runtime.Pgxp.Swc2({rt}, {Addr(rs, imm)});" : $"m.WriteU32({Addr(rs, imm)}, RecompOne.Runtime.Gte.StoreWord({rt}));",
             _ =>  UnknownInstr(i, $"op=0x{op:X2}")
         };
     }

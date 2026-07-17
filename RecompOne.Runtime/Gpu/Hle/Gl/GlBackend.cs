@@ -6,7 +6,7 @@ namespace RecompOne.Runtime.Hle;
 public sealed class GlBackend : IGpuBackend
 {
     [StructLayout(LayoutKind.Sequential)]
-    struct GlVertex { public float X, Y; public uint Color; public int Clut, Texpage; public float U, V; }
+    struct GlVertex { public float X, Y, W; public uint Color; public int Clut, Texpage; public float U, V; }
 
     const int MaxVerts = 0x40000;
 
@@ -31,7 +31,7 @@ public sealed class GlBackend : IGpuBackend
     int _kBlend, _kSetMask, _kCheckMask;
     int _kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY;
     int _kClipX0, _kClipY0, _kClipX1, _kClipY1;
-    int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv;
+    int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv, _uPctTex, _uPctCol;
     int _uPresentOrigin, _uPresentSize, _uPresentTexSize, _uPresent24Origin, _uPresent24Size;
 
     public bool Ready { get; private set; }
@@ -54,6 +54,8 @@ public sealed class GlBackend : IGpuBackend
         _uCheckMask = _gl.GetUniformLocation(_progPrim, "uCheckMask");
         _uPosBias = _gl.GetUniformLocation(_progPrim, "uPosBias");
         _uFbInv = _gl.GetUniformLocation(_progPrim, "uFbInv");
+        _uPctTex = _gl.GetUniformLocation(_progPrim, "uPctTex");
+        _uPctCol = _gl.GetUniformLocation(_progPrim, "uPctCol");
 
         _gl.UseProgram(_progPrim);
         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uVram"), 0);
@@ -79,10 +81,11 @@ public sealed class GlBackend : IGpuBackend
         _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(MaxVerts * sizeof(GlVertex)), null, BufferUsageARB.DynamicDraw);
         uint stride = (uint)sizeof(GlVertex);
         _gl.EnableVertexAttribArray(0); _gl.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, stride, (void*)0);
-        _gl.EnableVertexAttribArray(1); _gl.VertexAttribIPointer(1, 1, VertexAttribIType.UnsignedInt, stride, (void*)8);
-        _gl.EnableVertexAttribArray(2); _gl.VertexAttribIPointer(2, 1, VertexAttribIType.Int, stride, (void*)12);
-        _gl.EnableVertexAttribArray(3); _gl.VertexAttribIPointer(3, 1, VertexAttribIType.Int, stride, (void*)16);
-        _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)20);
+        _gl.EnableVertexAttribArray(1); _gl.VertexAttribIPointer(1, 1, VertexAttribIType.UnsignedInt, stride, (void*)12);
+        _gl.EnableVertexAttribArray(2); _gl.VertexAttribIPointer(2, 1, VertexAttribIType.Int, stride, (void*)16);
+        _gl.EnableVertexAttribArray(3); _gl.VertexAttribIPointer(3, 1, VertexAttribIType.Int, stride, (void*)20);
+        _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)24);
+        _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)8);
 
         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
         _presentVao = _gl.GenVertexArray();
@@ -266,6 +269,7 @@ public sealed class GlBackend : IGpuBackend
         return new GlVertex
         {
             X = v.X, Y = v.Y,
+            W = v.W > 0f ? v.W : 1f, // PGXP depth (1 = affine, matches PS1 behavior)
             Color = color,
             Clut = f.Clut & 0x7FFF,
             Texpage = f.Textured ? (f.TPage & 0x1FF) : 0x8000,
@@ -422,6 +426,8 @@ public sealed class GlBackend : IGpuBackend
             _gl.Uniform2(_uFbInv, 2f / VramShadow.Width, 2f / VramShadow.Height);
         }
         _gl.Uniform4(_uTexWindow, _kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY);
+        _gl.Uniform1(_uPctTex, RecompOne.Runtime.Pgxp.PerspectiveTextures ? 1 : 0);
+        _gl.Uniform1(_uPctCol, RecompOne.Runtime.Pgxp.PerspectiveColors ? 1 : 0);
         _gl.Uniform1(_uSetMask, _kSetMask == 1 ? 1f : 0f);
         _gl.Uniform1(_uCheckMask, _kCheckMask);
         _gl.Uniform4(_uBlendOpaque, 1f, 1f, 1f, 0f);

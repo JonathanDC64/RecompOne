@@ -16,9 +16,14 @@ public sealed partial class Gpu
         SetMask = _setMask, CheckMask = _checkMask, Dither = _dither,
     };
 
-    static HleVertex HV(in Vert v) => new()
+    static HleVertex HV(in Vert v, bool wholeTriPrecise) => new()
     {
-        X = v.X, Y = v.Y, R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
+        X = v.Precise ? v.PX : v.X,
+        Y = v.Precise ? v.PY : v.Y,
+        // Perspective-correct interpolation needs a consistent W across the whole
+        // triangle; fall back to affine (W=1) when any vertex lacks precise data.
+        W = wholeTriPrecise ? v.PW : 1f,
+        R = (byte)v.R, G = (byte)v.G, B = (byte)v.B, U = (short)v.U, V = (short)v.V,
     };
 
     PrimFlags PrimOf(bool tex, bool semi, bool raw, int clut) => new()
@@ -34,9 +39,19 @@ public sealed partial class Gpu
         int spanY = Math.Max(a.Y, Math.Max(b.Y, c.Y)) - Math.Min(a.Y, Math.Min(b.Y, c.Y));
         if (!NoSpanCull && (spanX > 1023 || spanY > 511)) return;
 
+        bool precise = a.Precise && b.Precise && c.Precise;
+        if (precise)
+        {
+            // W sanity: a value-cache collision can attach a wildly wrong depth to a
+            // vertex, producing strong perspective warp. Legit triangles rarely span
+            // a large depth ratio; fall back to affine when this one does.
+            float wMin = Math.Min(a.PW, Math.Min(b.PW, c.PW));
+            float wMax = Math.Max(a.PW, Math.Max(b.PW, c.PW));
+            if (wMin <= 0f || wMax > wMin * 32f) precise = false;
+        }
         var be = GpuHle.Backend!;
         be.SetDrawEnv(CurEnv());
-        be.DrawTri(HV(a), HV(b), HV(c), PrimOf(tex, semi, raw, clut));
+        be.DrawTri(HV(a, precise), HV(b, precise), HV(c, precise), PrimOf(tex, semi, raw, clut));
     }
 
     void HleRect(int x, int y, int w, int h, int u, int v, int clut, int r, int g, int b, bool tex, bool semi, bool raw)

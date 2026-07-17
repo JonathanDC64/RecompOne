@@ -3,7 +3,13 @@ namespace RecompOne.Runtime;
 //old soft raster
 public sealed partial class Gpu
 {
-    struct Vert { public int X, Y, R, G, B, U, V; }
+    struct Vert
+    {
+        public int X, Y, R, G, B, U, V;
+        public uint Word;         // raw vertex word as parsed (PGXP weld lookups)
+        public float PX, PY, PW;  // PGXP precise coords (valid when Precise)
+        public bool Precise;
+    }
 
     static readonly int[,] Dither =
     {
@@ -37,9 +43,18 @@ public sealed partial class Gpu
             }
             v[i].R = cr; v[i].G = cg; v[i].B = cb;
 
+            uint srcAddr = idx < _fifoSrc.Count ? _fifoSrc[idx] : 0;
             uint vw = _fifo[idx++];
+            v[i].Word = vw;
             v[i].X = _drawOffsetX + CoordX(vw);
             v[i].Y = _drawOffsetY + CoordY(vw);
+            if (Pgxp.Lookup(srcAddr, vw, out float px, out float py, out float pw))
+            {
+                v[i].PX = _drawOffsetX + px;
+                v[i].PY = _drawOffsetY + py;
+                v[i].PW = pw;
+                v[i].Precise = true;
+            }
 
             if (tex)
             {
@@ -48,6 +63,28 @@ public sealed partial class Gpu
                 v[i].V = (int)((uvw >> 8) & 0xFF);
                 if (i == 0) clut = (int)((uvw >> 16) & 0xFFFF);
                 else if (i == 1) SetTexpageFromWord((uvw >> 16) & 0xFFFF);
+            }
+        }
+
+        // PGXP is applied PER-VERTEX, unconditionally (like DuckStation): a vertex
+        // resolves the same way in every polygon that references it, so shared
+        // edges always agree — gating correction per-polygon made a shared corner
+        // precise in one poly and integer in its neighbour, which IS a crack.
+        // Unresolved vertices in a partly-resolved polygon get a consistent
+        // value-keyed weld where possible. (Perspective W still falls back to
+        // affine per-triangle unless every vertex is resolved — see HleTri.)
+        if (Pgxp.Enabled)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                if (v[i].Precise) continue;
+                if (Pgxp.WeldLookup(v[i].Word, out float wx, out float wy, out float ww))
+                {
+                    v[i].PX = _drawOffsetX + wx;
+                    v[i].PY = _drawOffsetY + wy;
+                    v[i].PW = ww;
+                    v[i].Precise = true;
+                }
             }
         }
 

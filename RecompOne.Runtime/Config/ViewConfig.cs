@@ -49,4 +49,34 @@ public class ViewConfig
         get => GetBool("NativeResolution");
         set => SetBool("NativeResolution", value);
     }
+
+    public bool PgxpGeometryCorrection
+    {
+        get => GetBool("PgxpGeometryCorrection");
+        set => SetBool("PgxpGeometryCorrection", value);
+    }
+
+    public bool PgxpPerspectiveTextures
+    {
+        get => GetBool("PgxpPerspectiveTextures", true);
+        set => SetBool("PgxpPerspectiveTextures", value);
+    }
+
+    public bool PgxpPerspectiveColors
+    {
+        get => GetBool("PgxpPerspectiveColors");
+        set => SetBool("PgxpPerspectiveColors", value);
+    }
+
+    public bool PgxpCullingCorrection
+    {
+        get => GetBool("PgxpCullingCorrection", true);
+        set => SetBool("PgxpCullingCorrection", value);
+    }
+
+    public int InternalScale
+    {
+        get => GetInt("InternalScale", 4);
+        set => SetInt("InternalScale", value);
+    }
 }

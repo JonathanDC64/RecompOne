@@ -48,11 +48,14 @@ public static class Runtime
     {
         if (++_primFrame % 60 == 0)
         {
-            System.Console.WriteLine($"[prim] poly={DbgPrim.Poly} line={DbgPrim.Line} rect={DbgPrim.Rect} gte:rtps={Gte.DbgOp[0x01]} rtpt={Gte.DbgOp[0x30]} nclip={Gte.DbgOp[0x06]} avsz={Gte.DbgOp[0x2D] + Gte.DbgOp[0x2E]}");
+            System.Console.WriteLine($"[prim] poly={DbgPrim.Poly} line={DbgPrim.Line} rect={DbgPrim.Rect} gte:rtps={Gte.DbgOp[0x01]} rtpt={Gte.DbgOp[0x30]} nclip={Gte.DbgOp[0x06]} avsz={Gte.DbgOp[0x2D] + Gte.DbgOp[0x2E]}"
+                + (Pgxp.Enabled ? $" pgxp={Pgxp.Hits}/{Pgxp.Hits + Pgxp.Misses} miss[noaddr={Pgxp.MissNoAddr} noent={Pgxp.MissNoEntry} val={Pgxp.MissValue} tol={Pgxp.MissTol}]" : ""));
             DbgPrim.Poly = DbgPrim.Line = DbgPrim.Rect = 0;
             DbgHit.A = DbgHit.B = DbgHit.C = DbgHit.D = DbgHit.E = DbgHit.F = 0;
+            Pgxp.ResetStats();
             System.Array.Clear(Gte.DbgOp);
         }
+        Pgxp.FrameStamp++;
         HostWindow.Present(Gpu);
         Audio.Attach(Spu);
         FrameClock.Throttle();

@@ -165,12 +165,17 @@ internal static class HostWindow
         _vramTex= CreateTexture(_gl);
         _ramTex = CreateTexture(_gl);
 
-        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : 4;
+        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : Math.Clamp(ConfigManager.View.InternalScale, 1, 8);
+        Console.WriteLine($"[scale] internal={Hle.GlVram.Scale}x (config={ConfigManager.View.InternalScale}, native={ConfigManager.View.NativeResolution})");
         _glBackend = new Hle.GlBackend(_gl);
         _glBackend.InitGl();
         Hle.GpuHle.Active = _glBackend.Ready;
         Hle.GpuHle.Backend = _glBackend;
         Hle.GpuHle.NativeResolution = ConfigManager.View.NativeResolution;
+        if (ConfigManager.View.PgxpGeometryCorrection) Pgxp.Enabled = true;
+        Pgxp.PerspectiveTextures = ConfigManager.View.PgxpPerspectiveTextures;
+        Pgxp.PerspectiveColors = ConfigManager.View.PgxpPerspectiveColors;
+        Pgxp.CullingCorrection = ConfigManager.View.PgxpCullingCorrection;
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 
