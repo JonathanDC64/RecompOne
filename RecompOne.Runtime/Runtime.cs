@@ -44,6 +44,10 @@ public static class Runtime
     }
 
     static int _primFrame;
+    // Optional game-registered callback fired once per presented frame
+    // (before the host present), e.g. for pacing bookkeeping.
+    public static Action? OnPresent;
+
     public static void PresentFrame()
     {
         if (++_primFrame % 60 == 0)
@@ -56,6 +60,7 @@ public static class Runtime
             System.Array.Clear(Gte.DbgOp);
         }
         Pgxp.FrameStamp++;
+        OnPresent?.Invoke();
         HostWindow.Present(Gpu);
         Audio.Attach(Spu);
         FrameClock.Throttle();
