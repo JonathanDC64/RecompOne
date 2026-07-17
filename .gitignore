@@ -7,7 +7,6 @@ riderModule.iml
 
 # --- KF2 recomp: game-specific project lives in the KingsField2Recomp repo ---
 # Kept out of the engine fork; it also holds copyrighted/derived material.
-kf2/
 
 # --- Never commit copyrighted material (supply your own dumps) ---
 # PS1 BIOS
