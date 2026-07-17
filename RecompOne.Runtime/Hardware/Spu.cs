@@ -264,6 +264,9 @@ public sealed class Spu
         }
     }
 
+    static readonly bool SpuLog = Environment.GetEnvironmentVariable("KF2_SPULOG") == "1";
+    static int _spuLogN;
+
     void KeyOn(ushort mask, bool hi)
     {
         int b = hi ? 16 : 0;
@@ -271,6 +274,8 @@ public sealed class Spu
         {
             if ((mask & (1 << i)) == 0) continue;
             var v = _v[b + i];
+            if (SpuLog && _spuLogN < 300)
+            { Console.WriteLine($"[spu] keyon v{b + i} volL=0x{v.VolL:X4} volR=0x{v.VolR:X4} pitch=0x{v.Pitch:X4} adsr={v.AdsrHi:X4}{v.AdsrLo:X4} start=0x{(uint)v.StartAddr << 3:X5} main=0x{_mainVolL:X4}/0x{_mainVolR:X4} cd=0x{_cdVolL:X4}/0x{_cdVolR:X4}"); _spuLogN++; }
             v.Phase = AdsrPhase.Attack;
             v.AdsrVol = 0;
             v.AdsrCycleCount = 0;
@@ -420,8 +425,11 @@ public sealed class Spu
 
             int steps = (int)(v.PitchCounter >> 12);
             v.PitchCounter &= 0xFFFu;
-            for (int s = 0; s < steps && v.SampleIndex < 28; s++)
+            for (int s = 0; s < steps; s++)
             {
+                // decode the next block on demand — bailing at the block boundary
+                // would drop steps and flatten the pitch at high pitch values
+                if (v.SampleIndex >= 28) DecodeBlock(v, i);
                 v.Ring[v.RingPos & 3] = v.Buf[v.SampleIndex++];
                 v.RingPos = (v.RingPos + 1) & 3;
             }

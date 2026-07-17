@@ -326,6 +326,7 @@ public static class LibCd
             case ReadS:
                 _xaActive = true;
                 _readActive = false;
+                LibCdStream.SetXaFilter((_mode & 0x08) != 0, _filterFile, _filterChannel);
                 LibCdStream.OnReadStream(CurrentLba);
                 break;
             case GetlocL:

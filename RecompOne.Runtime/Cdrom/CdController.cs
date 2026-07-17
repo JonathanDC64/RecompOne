@@ -273,6 +273,7 @@ public sealed class CdController
                     // The ring library is HLE'd (StSetRing was called): the HLE stream
                     // thread reads the disc + fills the ring/XA directly. No data INT1s.
                     _reading = false;
+                    Sdk.LibCdStream.SetXaFilter((_lastMode & 0x08) != 0, _filterFile, _filterChannel);
                     Sdk.LibCdStream.OnReadStream(_seekLba, (_lastMode & 0x80) != 0 ? 150.0 : 75.0);
                     QueueIrq(3, [DriveStatus()]);
                     break;
