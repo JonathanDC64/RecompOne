@@ -176,6 +176,9 @@ internal static class HostWindow
         Pgxp.PerspectiveTextures = ConfigManager.View.PgxpPerspectiveTextures;
         Pgxp.PerspectiveColors = ConfigManager.View.PgxpPerspectiveColors;
         Pgxp.CullingCorrection = ConfigManager.View.PgxpCullingCorrection;
+        Speed.TargetFps = Math.Clamp(ConfigManager.View.TargetFps, 15, 120);
+        Console.WriteLine($"[speed] target={Speed.TargetFps} shift={Speed.DeltaShift} capVblanks={Speed.FrameCapVblanks} (config={ConfigManager.View.TargetFps})");
+        if (ConfigManager.View.FmvAutoSkip) FmvSkip.AutoSkip = true;
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 
@@ -194,6 +197,7 @@ internal static class HostWindow
 
         SettingsRegistry.Register(new InputSettingsSection());
         SettingsRegistry.Register(new DisplaySettingsSection());
+        SettingsRegistry.Register(new GameSettingsSection());
         SettingsRegistry.Register(new AudioSettingsSection());
 
         _discPicker = new DiscPickerPopup();

@@ -79,4 +79,16 @@ public class ViewConfig
         get => GetInt("InternalScale", 4);
         set => SetInt("InternalScale", value);
     }
+
+    public int TargetFps
+    {
+        get => GetInt("TargetFps", 15);
+        set => SetInt("TargetFps", value);
+    }
+
+    public bool FmvAutoSkip
+    {
+        get => GetBool("FmvAutoSkip");
+        set => SetBool("FmvAutoSkip", value);
+    }
 }
