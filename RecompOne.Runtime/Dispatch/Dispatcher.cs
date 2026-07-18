@@ -11,10 +11,28 @@ public static class Dispatcher
     static readonly List<string> _active = [];
     static readonly Dictionary<uint, Action<CpuContext, IMemory>> _funcMap = [];
     private static IOverlay? _pending;
+
+    // Content-based activation: several small overlays can be streamed into the
+    // SAME base (per-map code overlays), and the game's load path doesn't always
+    // route the sector through LibCd, so LBA activation misses. These overlays
+    // carry a signature (first two words of their code); when a write lands in
+    // their shared region we identify which one is actually resident by matching
+    // RAM against the signatures and activate it. Restricted to small overlays
+    // (<=64KB) so the large base-sharing EXEs (OPEN/GAME/END) are never matched.
+    static readonly List<IOverlay> _contentOverlays = [];
+    static uint _cmLo = uint.MaxValue, _cmHi;
+
     public static void Register(string name, IOverlay overlay)
     {
         _registry[name] = overlay;
         if (overlay.LbaStart >= 0) _lbaToName[overlay.LbaStart] = name;
+        if ((overlay.Sig0 != 0 || overlay.Sig1 != 0) && overlay.Size > 0 && overlay.Size <= 0x10000)
+        {
+            _contentOverlays.Add(overlay);
+            uint s = overlay.Base & 0x1FFFFFu;
+            if (s < _cmLo) _cmLo = s;
+            if (s + overlay.Size > _cmHi) _cmHi = s + overlay.Size;
+        }
     }
 
     public static string[] ActiveNames
@@ -33,17 +51,44 @@ public static class Dispatcher
             return;
         }
 
+        // Content-signatured overlays (per-map code sharing one base) are
+        // activated solely by matching RAM content in NotifyWrite. Setting
+        // _pending here too would fight that: the game re-reads a sibling's LBA
+        // (e.g. MAP_START's 12600) and the pending load would flip the overlay
+        // back and forth every write. Let content be authoritative for them.
+        if ((overlay.Sig0 != 0 || overlay.Sig1 != 0) && overlay.Size > 0 && overlay.Size <= 0x10000)
+            return;
+
         _pending = overlay;
     }
 
     public static void NotifyWrite(uint phys)
     {
+        // A write into a shared per-map-overlay region: identify the resident
+        // overlay by signature and activate it (robust to LBA-activation misses).
+        if (_contentOverlays.Count > 0 && phys >= _cmLo && phys < _cmHi)
+            ResolveByContent();
+
         var p = _pending;
         if (p == null) return;
         uint start = p.Base & 0x1FFFFFFFu;
         if (phys < start || phys >= start + 0x800u) return;
         _pending = null;
         Load(p.Name);
+    }
+
+    static void ResolveByContent()
+    {
+        var mem = Runtime.Mem;
+        if (mem == null) return;
+        foreach (var ov in _contentOverlays)
+        {
+            if (mem.ReadU32(ov.Base) != ov.Sig0 || mem.ReadU32(ov.Base + 4u) != ov.Sig1)
+                continue;
+            lock (_active) if (_active.Contains(ov.Name)) return; // already resident
+            Load(ov.Name);
+            return;
+        }
     }
     public static void ClearPending() => _pending = null;
 
