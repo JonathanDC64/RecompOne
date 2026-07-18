@@ -8,6 +8,10 @@ public static class GpuHle
     public static float WideAspect { get; set; }
     public static float OutputAspect { get; set; } = 4f / 3f;
     public static bool NativeResolution { get; set; }
+
+    // Bilinear texture filtering for 3D world polygons (manual CLUT-aware bilinear
+    // in the prim fragment shader). Runtime-switchable; off = nearest (PS1 look).
+    public static bool TextureFilter { get; set; }
     public static float TargetAspect { get; set; } = 4f / 3f;
     public const float BaseAspect = 4f / 3f;
 

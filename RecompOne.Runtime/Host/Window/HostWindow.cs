@@ -177,6 +177,7 @@ internal static class HostWindow
         Pgxp.PerspectiveTextures = ConfigManager.View.PgxpPerspectiveTextures;
         Pgxp.PerspectiveColors = ConfigManager.View.PgxpPerspectiveColors;
         Pgxp.CullingCorrection = ConfigManager.View.PgxpCullingCorrection;
+        Hle.GpuHle.TextureFilter = ConfigManager.View.TextureFilter;
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 

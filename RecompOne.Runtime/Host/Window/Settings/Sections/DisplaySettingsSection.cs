@@ -44,6 +44,19 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         if (wantScale != Hle.GlVram.Scale)
             ImGui.TextDisabled("restart required");
 
+        bool texFilter = ConfigManager.View.TextureFilter;
+        if (ImGui.Checkbox("Bilinear texture filtering", ref texFilter))
+        {
+            ConfigManager.View.TextureFilter = texFilter;
+            Hle.GpuHle.TextureFilter = texFilter;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "Smooths 3D world textures (CLUT-aware bilinear) instead of the\n"
+                + "blocky nearest-neighbour PS1 look; also softens baked-in dithering.\n"
+                + "Runtime-switchable. UI/HUD sprites are unaffected.");
+
         bool pgxp = ConfigManager.View.PgxpGeometryCorrection;
         if (ImGui.Checkbox("PGXP Geometry Correction (experimental)", ref pgxp))
         {

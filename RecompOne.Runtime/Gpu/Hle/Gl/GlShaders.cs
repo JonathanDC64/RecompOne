@@ -72,6 +72,7 @@ internal static class GlShaders
         flat out ivec2 clutBase;
         flat out ivec2 pageBase;
         flat out int   texMode;
+        flat out int   vPersp; // 1 = perspective 3D poly (W!=1); 0 = 2D rect/sprite/affine
 
         uniform vec2 uVertexOffset;
         uniform vec2 uPosBias;
@@ -83,6 +84,7 @@ internal static class GlShaders
             // smooth varyings perspective-correctly; W=1 = PS1-style affine. The
             // noperspective twins always interpolate affine regardless of W.
             gl_Position = vec4(p * inW, 0.0, inW);
+            vPersp = (inW != 1.0) ? 1 : 0; // rects/sprites are affine (W=1) -> excluded from bilinear
 
             vColor = vec4(float(inColor & 0xFFu), float((inColor >> 8) & 0xFFu), float((inColor >> 16) & 0xFFu), 0.0) / 255.0;
             vColorA = vColor;
@@ -108,6 +110,7 @@ internal static class GlShaders
         flat in ivec2 clutBase;
         flat in ivec2 pageBase;
         flat in int   texMode;
+        flat in int   vPersp;
 
         uniform int uPctTex; // 1 = perspective-correct texture coords (PGXP)
         uniform int uPctCol; // 1 = perspective-correct vertex colors
@@ -123,6 +126,7 @@ internal static class GlShaders
         uniform float uSetMask;
         uniform int   uCheckMask;
         uniform int   uScale;
+        uniform int   uFilter; // 0 = nearest, 1 = bilinear (manual, CLUT-aware)
 
         int u5(float f) { return int(floor(f * 31.0 + 0.5)); }
         vec4 fetch(ivec2 c) { return texelFetch(uVram, (c & ivec2(1023, 511)) * uScale, 0); }
@@ -131,6 +135,23 @@ internal static class GlShaders
             return u5(p.r) | (u5(p.g) << 5) | (u5(p.b) << 10) | (int(ceil(p.a)) << 15);
         }
         vec4 modulate(vec4 tex, vec4 col) { vec4 r = (tex * col) / (128.0 / 255.0); r.a = 1.0; return r; }
+
+        // Decode ONE texel at integer coords (texture-window wrap + CLUT lookup).
+        vec4 sampleTexel(ivec2 raw) {
+            ivec2 uv = ((raw & uTexWindow.xy) | uTexWindow.zw) & ivec2(0xff);
+            if (texMode == 0) {
+                int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
+                int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
+                return fetch(ivec2(clutBase.x + idx, clutBase.y));
+            } else if (texMode == 1) {
+                int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
+                int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
+                return fetch(ivec2(clutBase.x + idx, clutBase.y));
+            }
+            return fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
+        }
+        // PS1 transparency: a texel whose 16-bit value is all-zero is "not drawn".
+        bool isOpaque(vec4 t) { return !(t.rgb == vec3(0.0) && t.a < 0.5); }
 
         void main() {
             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
@@ -144,25 +165,40 @@ internal static class GlShaders
                 return;
             }
 
-            int rawU = dFdx(uvi.x) < 0.0 ? int(ceil(uvi.x - 0.0001)) : int(floor(uvi.x + 0.0001));
-            int rawV = dFdy(uvi.y) < 0.0 ? int(ceil(uvi.y - 0.0001)) : int(floor(uvi.y + 0.0001));
-            ivec2 uv = (ivec2(rawU, rawV) & uTexWindow.xy) | uTexWindow.zw;
-            uv &= ivec2(0xff);
             vec4 texel;
-
-            if (texMode == 0) {
-                int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
-                int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
-                texel = fetch(ivec2(clutBase.x + idx, clutBase.y));
-            } else if (texMode == 1) {
-                int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
-                int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
-                texel = fetch(ivec2(clutBase.x + idx, clutBase.y));
+            if (uFilter == 0 || vPersp == 0) {
+                // Nearest: subpixel-correct texel pick (matches PS1 rasterizer).
+                // Also the path for 2D rects/sprites/UI, which stay crisp.
+                int rawU = dFdx(uvi.x) < 0.0 ? int(ceil(uvi.x - 0.0001)) : int(floor(uvi.x + 0.0001));
+                int rawV = dFdy(uvi.y) < 0.0 ? int(ceil(uvi.y - 0.0001)) : int(floor(uvi.y + 0.0001));
+                texel = sampleTexel(ivec2(rawU, rawV));
+                if (!isOpaque(texel)) discard;
             } else {
-                texel = fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
+                // Manual CLUT-aware bilinear: decode the 4 neighbours to RGBA and
+                // blend, weighting out transparent texels so opaque edges don't
+                // bleed toward black (hardware filtering can't run on CLUT indices).
+                vec2 f = uvi - vec2(0.5);
+                ivec2 b = ivec2(floor(f));
+                vec2 fr = f - vec2(b);
+                // TODO(uv_limits): clamp b+offset taps to the primitive's UV
+                // bounding box (DuckStation's fix) to stop bleed into adjacent
+                // atlas textures / across tile edges. Needs a per-vertex UV-bounds
+                // attribute plumbed from GpuRaster (per whole primitive, incl. all
+                // 4 quad verts). Until then, opaque atlas neighbours can bleed.
+                vec4 t00 = sampleTexel(b + ivec2(0, 0));
+                vec4 t10 = sampleTexel(b + ivec2(1, 0));
+                vec4 t01 = sampleTexel(b + ivec2(0, 1));
+                vec4 t11 = sampleTexel(b + ivec2(1, 1));
+                float w00 = (1.0 - fr.x) * (1.0 - fr.y) * (isOpaque(t00) ? 1.0 : 0.0);
+                float w10 = fr.x * (1.0 - fr.y) * (isOpaque(t10) ? 1.0 : 0.0);
+                float w01 = (1.0 - fr.x) * fr.y * (isOpaque(t01) ? 1.0 : 0.0);
+                float w11 = fr.x * fr.y * (isOpaque(t11) ? 1.0 : 0.0);
+                float ws = w00 + w10 + w01 + w11;
+                if (ws < 0.001) discard; // all four neighbours transparent
+                vec3 rgb = (t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / ws;
+                float a = (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ws;
+                texel = vec4(rgb, a);
             }
-
-            if (texel.rgb == vec3(0.0) && texel.a < 0.5) discard;
             FragColor = vec4(modulate(texel, col).rgb, max(texel.a, uSetMask));
             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
         }
