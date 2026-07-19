@@ -6,7 +6,7 @@ namespace RecompOne.Runtime.Hle;
 public sealed class GlBackend : IGpuBackend
 {
     [StructLayout(LayoutKind.Sequential)]
-    struct GlVertex { public float X, Y, W; public uint Color; public int Clut, Texpage; public float U, V; }
+    struct GlVertex { public float X, Y, W; public uint Color; public int Clut, Texpage; public float U, V; public int UvLimits; }
 
     const int MaxVerts = 0x40000;
 
@@ -31,7 +31,7 @@ public sealed class GlBackend : IGpuBackend
     int _kBlend, _kSetMask, _kCheckMask;
     int _kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY;
     int _kClipX0, _kClipY0, _kClipX1, _kClipY1;
-    int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv, _uPctTex, _uPctCol, _uFilter;
+    int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv, _uPctTex, _uPctCol, _uFilter, _uFilterSprite;
     int _uPresentOrigin, _uPresentSize, _uPresentTexSize, _uPresent24Origin, _uPresent24Size;
 
     public bool Ready { get; private set; }
@@ -57,6 +57,7 @@ public sealed class GlBackend : IGpuBackend
         _uPctTex = _gl.GetUniformLocation(_progPrim, "uPctTex");
         _uPctCol = _gl.GetUniformLocation(_progPrim, "uPctCol");
         _uFilter = _gl.GetUniformLocation(_progPrim, "uFilter");
+        _uFilterSprite = _gl.GetUniformLocation(_progPrim, "uFilterSprite");
 
         _gl.UseProgram(_progPrim);
         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uVram"), 0);
@@ -87,6 +88,7 @@ public sealed class GlBackend : IGpuBackend
         _gl.EnableVertexAttribArray(3); _gl.VertexAttribIPointer(3, 1, VertexAttribIType.Int, stride, (void*)20);
         _gl.EnableVertexAttribArray(4); _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)24);
         _gl.EnableVertexAttribArray(5); _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)8);
+        _gl.EnableVertexAttribArray(6); _gl.VertexAttribIPointer(6, 1, VertexAttribIType.Int, stride, (void*)32); // packed UV bbox (uMin|vMin<<8|uMax<<16|vMax<<24)
 
         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
         _presentVao = _gl.GenVertexArray();
@@ -264,7 +266,7 @@ public sealed class GlBackend : IGpuBackend
         _kClipX0 = _env.ClipX0; _kClipY0 = _env.ClipY0; _kClipX1 = _env.ClipX1; _kClipY1 = _env.ClipY1;
     }
 
-    GlVertex V(in HleVertex v, in PrimFlags f)
+    GlVertex V(in HleVertex v, in PrimFlags f, int uvLimits = 0)
     {
         uint color = (f.Textured && f.RawTexture) ? 0x808080u : (uint)(v.R | (v.G << 8) | (v.B << 16));
         return new GlVertex
@@ -275,13 +277,29 @@ public sealed class GlBackend : IGpuBackend
             Clut = f.Clut & 0x7FFF,
             Texpage = f.Textured ? (f.TPage & 0x1FF) : 0x8000,
             U = v.U, V = v.V,
+            UvLimits = uvLimits,
         };
+    }
+
+    // Pack the primitive's UV bounding box into one int (each component 0-255) so
+    // the fragment shader can clamp bilinear taps to it -> no bleed into adjacent
+    // atlas textures / across tile edges. For axis-aligned UV quads (the common
+    // case) any 3 of the 4 corners already span the full box, so the per-triangle
+    // min/max equals the whole quad's.
+    static int UvBox(in HleVertex a, in HleVertex b, in HleVertex c)
+    {
+        int uMin = Math.Min(a.U, Math.Min(b.U, c.U)) & 0xFF;
+        int vMin = Math.Min(a.V, Math.Min(b.V, c.V)) & 0xFF;
+        int uMax = Math.Max(a.U, Math.Max(b.U, c.U)) & 0xFF;
+        int vMax = Math.Max(a.V, Math.Max(b.V, c.V)) & 0xFF;
+        return uMin | (vMin << 8) | (uMax << 16) | (vMax << 24);
     }
 
     public void DrawTri(in HleVertex a, in HleVertex b, in HleVertex c, in PrimFlags f)
     {
         Begin(f, 3);
-        _verts[_count++] = V(a, f); _verts[_count++] = V(b, f); _verts[_count++] = V(c, f);
+        int uv = UvBox(a, b, c);
+        _verts[_count++] = V(a, f, uv); _verts[_count++] = V(b, f, uv); _verts[_count++] = V(c, f, uv);
     }
 
     public void DrawRect(in HleRect r, in PrimFlags f)
@@ -291,8 +309,9 @@ public sealed class GlBackend : IGpuBackend
         var b = new HleVertex { X = r.X + r.W, Y = r.Y, R = r.R, G = r.G, B = r.B, U = (short)(r.U + r.W), V = r.V };
         var c = new HleVertex { X = r.X, Y = r.Y + r.H, R = r.R, G = r.G, B = r.B, U = r.U, V = (short)(r.V + r.H) };
         var d = new HleVertex { X = r.X + r.W, Y = r.Y + r.H, R = r.R, G = r.G, B = r.B, U = (short)(r.U + r.W), V = (short)(r.V + r.H) };
-        _verts[_count++] = V(a, f); _verts[_count++] = V(b, f); _verts[_count++] = V(c, f);
-        _verts[_count++] = V(b, f); _verts[_count++] = V(d, f); _verts[_count++] = V(c, f);
+        int uv = UvBox(a, b, c); // axis-aligned rect: 3 corners span the full box
+        _verts[_count++] = V(a, f, uv); _verts[_count++] = V(b, f, uv); _verts[_count++] = V(c, f, uv);
+        _verts[_count++] = V(b, f, uv); _verts[_count++] = V(d, f, uv); _verts[_count++] = V(c, f, uv);
     }
 
     public void DrawLine(in HleVertex a, in HleVertex b, in PrimFlags f)
@@ -430,6 +449,7 @@ public sealed class GlBackend : IGpuBackend
         _gl.Uniform1(_uPctTex, RecompOne.Runtime.Pgxp.PerspectiveTextures ? 1 : 0);
         _gl.Uniform1(_uPctCol, RecompOne.Runtime.Pgxp.PerspectiveColors ? 1 : 0);
         _gl.Uniform1(_uFilter, GpuHle.TextureFilter ? 1 : 0);
+        _gl.Uniform1(_uFilterSprite, GpuHle.SpriteTextureFilter ? 1 : 0);
         _gl.Uniform1(_uSetMask, _kSetMask == 1 ? 1f : 0f);
         _gl.Uniform1(_uCheckMask, _kCheckMask);
         _gl.Uniform4(_uBlendOpaque, 1f, 1f, 1f, 0f);

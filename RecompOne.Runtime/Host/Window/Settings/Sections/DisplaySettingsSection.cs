@@ -45,7 +45,7 @@ internal sealed class DisplaySettingsSection : ISettingsSection
             ImGui.TextDisabled("restart required");
 
         bool texFilter = ConfigManager.View.TextureFilter;
-        if (ImGui.Checkbox("Bilinear texture filtering", ref texFilter))
+        if (ImGui.Checkbox("Texture filtering (bilinear, experimental)", ref texFilter))
         {
             ConfigManager.View.TextureFilter = texFilter;
             Hle.GpuHle.TextureFilter = texFilter;
@@ -53,9 +53,22 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(
-                "Smooths 3D world textures (CLUT-aware bilinear) instead of the\n"
-                + "blocky nearest-neighbour PS1 look; also softens baked-in dithering.\n"
-                + "Runtime-switchable. UI/HUD sprites are unaffected.");
+                "Smooths 3D world polygon textures (CLUT-aware bilinear) instead of\n"
+                + "the blocky nearest look; also softens baked-in dithering.\n"
+                + "Runtime-switchable.");
+
+        bool sprFilter = ConfigManager.View.SpriteTextureFilter;
+        if (ImGui.Checkbox("Sprite texture filtering (bilinear, experimental)", ref sprFilter))
+        {
+            ConfigManager.View.SpriteTextureFilter = sprFilter;
+            Hle.GpuHle.SpriteTextureFilter = sprFilter;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "Bilinear for 2D sprites / billboards / UI (affine primitives),\n"
+                + "controlled separately from world polygons. Off = crisp nearest\n"
+                + "(recommended for pixel UI/text).");
 
         bool pgxp = ConfigManager.View.PgxpGeometryCorrection;
         if (ImGui.Checkbox("PGXP Geometry Correction (experimental)", ref pgxp))

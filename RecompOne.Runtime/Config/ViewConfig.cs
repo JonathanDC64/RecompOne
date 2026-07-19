@@ -68,6 +68,12 @@ public class ViewConfig
         set => SetBool("TextureFilter", value);
     }
 
+    public bool SpriteTextureFilter
+    {
+        get => GetBool("SpriteTextureFilter");
+        set => SetBool("SpriteTextureFilter", value);
+    }
+
     public bool PgxpPerspectiveColors
     {
         get => GetBool("PgxpPerspectiveColors");
