@@ -89,6 +89,7 @@ internal static class HostWindow
             ConfigManager.SaveView(PanelManager.Panels);
         }
         _window.DoRender();
+        MarkRendered();
     }
 
     internal static void Pump()
@@ -97,26 +98,42 @@ internal static class HostWindow
         try { _window.DoEvents(); } catch { }
         if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
         _window.DoRender();
+        MarkRendered();
     }
 
     static readonly System.Diagnostics.Stopwatch _inputPumpClock = System.Diagnostics.Stopwatch.StartNew();
     static long _lastInputPumpMs = -100;
-    // Pump host events + input WITHOUT rendering. Games that busy-poll the pad
-    // without yielding to VSync would otherwise never capture keyboard/controller
-    // input (and the OS window would show "Not Responding"). Throttled to keep
-    // DoEvents cheap when called from a tight poll loop.
+    // Timestamp of the last real present (Present/Pump/DoRender). Used to detect
+    // when the normal VSync->PresentFrame path has stalled — see PumpInput.
+    static long _lastRenderMs = -1000;
+    static void MarkRendered() => _lastRenderMs = _inputPumpClock.ElapsedMilliseconds;
+
+    // Pump host events + input from a busy pad-poll loop. Games that busy-poll
+    // the pad without yielding to VSync would otherwise never capture input (and
+    // the OS window would show "Not Responding"). Throttled to keep DoEvents
+    // cheap when called from a tight poll loop.
     public static void PumpInput()
     {
         if (_headless || _window == null) return;
         // Honor a pending screenshot even while the game is stuck in a non-VSync
         // poll loop (menus, load waits) — force a render so OnRender can capture.
-        if (BotControl.ShotPath != null || BotControl.VramShotPath != null) { try { _window.DoRender(); } catch { } }
+        if (BotControl.ShotPath != null || BotControl.VramShotPath != null) { try { _window.DoRender(); } catch { } MarkRendered(); }
         long now = _inputPumpClock.ElapsedMilliseconds;
         if (now - _lastInputPumpMs < 2) return;
         _lastInputPumpMs = now;
         try { _window.DoEvents(); } catch { }
         if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
         InputManager.Poll();
+        // If the game is busy-polling the pad without yielding to VSync (the NPC
+        // dialogue wait loop, func_800441D4, spins on PadRead and draws the text
+        // box once but never flips), the normal present path never runs, so the
+        // window would freeze on a stale frame with the just-drawn dialogue
+        // unseen — and the ImGui menus (drawn in DoRender) can't be interacted
+        // with. Present here once the render path has gone stale (~66Hz) so the
+        // dialogue shows and the window stays live. During normal gameplay
+        // PresentFrame renders every frame, keeping _lastRenderMs fresh, so this
+        // never fires.
+        if (now - _lastRenderMs > 15) { try { _window.DoRender(); } catch { } MarkRendered(); }
     }
 
     public static void Shutdown()
