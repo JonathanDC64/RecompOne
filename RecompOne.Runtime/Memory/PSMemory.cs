@@ -54,6 +54,11 @@ public sealed class PSMemory : IMemory
     // position) doesn't flood the log or hide a rarer writer behind a hit cap.
     static readonly (uint lo, uint hi)? _watch = ParseWatch();
     static readonly HashSet<string> _watchSeen = new();
+    // KF2_WATCH_AFTER=seconds: arm the watch only after N seconds, so boot-time
+    // writers (stack regions are reused by everything) don't fill the dedup cap.
+    static readonly System.Diagnostics.Stopwatch _watchClock = System.Diagnostics.Stopwatch.StartNew();
+    static readonly long _watchAfterMs =
+        long.TryParse(Environment.GetEnvironmentVariable("KF2_WATCH_AFTER"), out var _wa) ? _wa * 1000 : 0;
     static (uint, uint)? ParseWatch()
     {
         var s = Environment.GetEnvironmentVariable("KF2_WATCH");
@@ -64,7 +69,8 @@ public sealed class PSMemory : IMemory
 
     private void TrackWrite(uint phys, int size)
     {
-        if (_watch is { } w && phys >= w.lo && phys < w.hi && _watchSeen.Count < 200)
+        if (_watch is { } w && phys >= w.lo && phys < w.hi && _watchSeen.Count < 200
+            && _watchClock.ElapsedMilliseconds >= _watchAfterMs)
         {
             var st = new System.Diagnostics.StackTrace(false);
             // Collect the top few recompiled frames (call chain), so a generic

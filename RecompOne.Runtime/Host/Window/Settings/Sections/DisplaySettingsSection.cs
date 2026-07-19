@@ -84,6 +84,16 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         {
             ImGui.Indent();
 
+            bool cpuMode = ConfigManager.View.PgxpCpuMode;
+            if (ImGui.Checkbox("CPU mode (arithmetic tracking)", ref cpuMode))
+            {
+                ConfigManager.View.PgxpCpuMode = cpuMode;
+                Pgxp.CpuMode = cpuMode;
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Track vertex precision through CPU arithmetic (DuckStation PGXP CPU\nmode). Fixes the residual hairline seams on CPU-repacked vertices.\nSmall CPU cost. Takes effect immediately.");
+
             bool pctTex = ConfigManager.View.PgxpPerspectiveTextures;
             if (ImGui.Checkbox("Perspective correct textures", ref pctTex))
             {

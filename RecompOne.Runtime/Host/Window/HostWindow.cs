@@ -174,6 +174,7 @@ internal static class HostWindow
         Hle.GpuHle.Backend = _glBackend;
         Hle.GpuHle.NativeResolution = ConfigManager.View.NativeResolution;
         if (ConfigManager.View.PgxpGeometryCorrection) Pgxp.Enabled = true;
+        Pgxp.CpuMode = ConfigManager.View.PgxpCpuMode;
         Pgxp.PerspectiveTextures = ConfigManager.View.PgxpPerspectiveTextures;
         Pgxp.PerspectiveColors = ConfigManager.View.PgxpPerspectiveColors;
         Pgxp.CullingCorrection = ConfigManager.View.PgxpCullingCorrection;

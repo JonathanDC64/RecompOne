@@ -190,8 +190,12 @@ public static class Gte
         if (Pgxp.Enabled)
         {
             // Precise (pre-truncation) screen coords FIFO, parallel to SX/SY.
-            PFX[0] = PFX[1]; PFX[1] = PFX[2]; PFX[2] = (float)(sx / 65536.0);
-            PFY[0] = PFY[1]; PFY[1] = PFY[2]; PFY[2] = (float)(sy / 65536.0);
+            // Clamped to the hardware SX/SY saturation range like DuckStation
+            // (gte.cpp RTPS): a far-offscreen vertex must stay consistent with
+            // the saturated integer the game stores, or big polys (sky quads)
+            // shrink/warp when the precise value is used.
+            PFX[0] = PFX[1]; PFX[1] = PFX[2]; PFX[2] = Math.Clamp((float)(sx / 65536.0), -1024f, 1023f);
+            PFY[0] = PFY[1]; PFY[1] = PFY[2]; PFY[2] = Math.Clamp((float)(sy / 65536.0), -1024f, 1023f);
             PFW[0] = PFW[1]; PFW[1] = PFW[2]; PFW[2] = Math.Max((ushort)1, SZ[3]);
         }
 

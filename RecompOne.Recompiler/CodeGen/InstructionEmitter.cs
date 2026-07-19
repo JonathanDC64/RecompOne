@@ -50,6 +50,23 @@ public static class InstructionEmitter
         _ =>  $"/* MTC0 r{rd} ignored */"
     };
 
+    // --- PGXP CPU-mode instrumentation (DuckStation cpu_pgxp.cpp port) --------
+    // Arithmetic that transforms vertex words (KF2 repacks X|Y<<16 via sll/or,
+    // offsets via addiu) gets a Pgxp.Cpu* call emitted BEFORE the C# op, while
+    // the operand registers still hold their pre-op values. Guarded by the
+    // Pgxp.CpuOn static field so the cost when off is a load + branch.
+    // Registers that can never carry vertex data (at: assembler address-building
+    // temp; k0/k1: kernel temps; gp: globals pointer; sp: stack pointer; ra:
+    // return address) are skipped — that removes the prologue/epilogue flood
+    // (addiu sp,sp,N) and the lui/addiu address-macro flood.
+    static bool PgxpSkip(int r) => r is 1 or 26 or 27 or 28 or 29 or 31;
+
+    static string PgxpCpu(int destReg, string call)
+        => PgxpSkip(destReg) ? "" : PgxpCpuAlways(call);
+
+    static string PgxpCpuAlways(string call)
+        => $"if (RecompOne.Runtime.Pgxp.CpuOn) RecompOne.Runtime.Pgxp.{call}; ";
+
     public static string EmitSingle(MipsInstruction i)
     {
         uint op = i.Word >> 26;
@@ -61,32 +78,34 @@ public static class InstructionEmitter
 
         if (op == 0)
         {
+            // rs/rt touching sp is address math, never vertex data — skip those too.
+            string CpuR(string call) => rs == 29 || rt == 29 ? "" : PgxpCpu(rd, call);
             return (int)fn switch
             {
-                0 =>  rd == 0 ? "" : sa == 0 ? $"{RD} = {RT};" : $"{RD} = {RT} << {sa};",
-                2 =>  rd == 0 ? "" : $"{RD} = {RT} >> {sa};",
-                3 =>  rd == 0 ? "" : $"{RD} = (uint)((int){RT} >> {sa});",
-                4 =>  rd == 0 ? "" : $"{RD} = {RT} << (int)({RS} & 31u);",
-                6 =>  rd == 0 ? "" : $"{RD} = {RT} >> (int)({RS} & 31u);",
-                7 =>  rd == 0 ? "" : $"{RD} = (uint)((int){RT} >> (int)({RS} & 31u));",
+                0 =>  rd == 0 ? "" : CpuR($"CpuSll({rd}, {rt}, {RT}, {sa})") + (sa == 0 ? $"{RD} = {RT};" : $"{RD} = {RT} << {sa};"),
+                2 =>  rd == 0 ? "" : CpuR($"CpuSrl({rd}, {rt}, {RT}, {sa})") + $"{RD} = {RT} >> {sa};",
+                3 =>  rd == 0 ? "" : CpuR($"CpuSra({rd}, {rt}, {RT}, {sa})") + $"{RD} = (uint)((int){RT} >> {sa});",
+                4 =>  rd == 0 ? "" : CpuR($"CpuSllv({rd}, {rt}, {RT}, {RS})") + $"{RD} = {RT} << (int)({RS} & 31u);",
+                6 =>  rd == 0 ? "" : CpuR($"CpuSrlv({rd}, {rt}, {RT}, {RS})") + $"{RD} = {RT} >> (int)({RS} & 31u);",
+                7 =>  rd == 0 ? "" : CpuR($"CpuSrav({rd}, {rt}, {RT}, {RS})") + $"{RD} = (uint)((int){RT} >> (int)({RS} & 31u));",
                 8 =>  "",
                 9 =>  "",
                 12 => "Bios.Syscall(c, m);",
                 13 => "Bios.Break(c, m);",
-                16 => rd == 0 ? "" : $"{RD} = c.HI;",
-                17 => $"c.HI = {RS};",
-                18 => rd == 0 ? "" : $"{RD} = c.LO;",
-                19 => $"c.LO = {RS};",
-                24 => $"{{ var _r = (long)(int){RS} * (int){RT}; c.LO = (uint)_r; c.HI = (uint)(_r >> 32); }}",
-                25 => $"{{ var _r = (ulong){RS} * {RT}; c.LO = (uint)_r; c.HI = (uint)(_r >> 32); }}",
-                26 => rt == 0 ? "c.LO = 0u; c.HI = 0u;" : $"if ({RT} != 0u) {{ if ((int){RS} == int.MinValue && (int){RT} == -1) {{ c.LO = 0x80000000u; c.HI = 0u; }} else {{ c.LO = (uint)((int){RS} / (int){RT}); c.HI = (uint)((int){RS} % (int){RT}); }} }}",
-                27 => rt == 0 ? "c.LO = 0u; c.HI = 0u;" : $"if ({RT} != 0u) {{ c.LO = {RS} / {RT}; c.HI = {RS} % {RT}; }}",
-                32 or 33 => rd == 0 ? "" : $"{RD} = {RS} + {RT};",
-                34 or 35 => rd == 0 ? "" : $"{RD} = {RS} - {RT};",
-                36 => rd == 0 ? "" : $"{RD} = {RS} & {RT};",
-                37 => rd == 0 ? "" : rs == 0 ? $"{RD} = {RT};" : rt == 0 ? $"{RD} = {RS};" : $"{RD} = {RS} | {RT};",
-                38 => rd == 0 ? "" : $"{RD} = {RS} ^ {RT};",
-                39 => rd == 0 ? "" : $"{RD} = ~({RS} | {RT});",
+                16 => rd == 0 ? "" : PgxpCpu(rd, $"CpuMfhi({rd}, c.HI)") + $"{RD} = c.HI;",
+                17 => PgxpCpuAlways($"CpuMthi({rs}, {RS})") + $"c.HI = {RS};",
+                18 => rd == 0 ? "" : PgxpCpu(rd, $"CpuMflo({rd}, c.LO)") + $"{RD} = c.LO;",
+                19 => PgxpCpuAlways($"CpuMtlo({rs}, {RS})") + $"c.LO = {RS};",
+                24 => CpuR($"CpuMult({rs}, {rt}, {RS}, {RT})") + $"{{ var _r = (long)(int){RS} * (int){RT}; c.LO = (uint)_r; c.HI = (uint)(_r >> 32); }}",
+                25 => CpuR($"CpuMultu({rs}, {rt}, {RS}, {RT})") + $"{{ var _r = (ulong){RS} * {RT}; c.LO = (uint)_r; c.HI = (uint)(_r >> 32); }}",
+                26 => rt == 0 ? "c.LO = 0u; c.HI = 0u;" : CpuR($"CpuDiv({rs}, {rt}, {RS}, {RT})") + $"if ({RT} != 0u) {{ if ((int){RS} == int.MinValue && (int){RT} == -1) {{ c.LO = 0x80000000u; c.HI = 0u; }} else {{ c.LO = (uint)((int){RS} / (int){RT}); c.HI = (uint)((int){RS} % (int){RT}); }} }}",
+                27 => rt == 0 ? "c.LO = 0u; c.HI = 0u;" : CpuR($"CpuDivu({rs}, {rt}, {RS}, {RT})") + $"if ({RT} != 0u) {{ c.LO = {RS} / {RT}; c.HI = {RS} % {RT}; }}",
+                32 or 33 => rd == 0 ? "" : CpuR($"CpuAdd({rd}, {rs}, {rt}, {RS}, {RT})") + $"{RD} = {RS} + {RT};",
+                34 or 35 => rd == 0 ? "" : CpuR($"CpuSub({rd}, {rs}, {rt}, {RS}, {RT})") + $"{RD} = {RS} - {RT};",
+                36 => rd == 0 ? "" : CpuR($"CpuAnd({rd}, {rs}, {rt}, {RS}, {RT})") + $"{RD} = {RS} & {RT};",
+                37 => rd == 0 ? "" : CpuR($"CpuOr({rd}, {rs}, {rt}, {RS}, {RT})") + (rs == 0 ? $"{RD} = {RT};" : rt == 0 ? $"{RD} = {RS};" : $"{RD} = {RS} | {RT};"),
+                38 => rd == 0 ? "" : CpuR($"CpuXor({rd}, {rs}, {rt}, {RS}, {RT})") + $"{RD} = {RS} ^ {RT};",
+                39 => rd == 0 ? "" : CpuR($"CpuNor({rd}, {rs}, {rt}, {RS}, {RT})") + $"{RD} = ~({RS} | {RT});",
                 42 => rd == 0 ? "" : $"{RD} = (int){RS} < (int){RT} ? 1u : 0u;",
                 43 => rd == 0 ? "" : $"{RD} = {RS} < {RT} ? 1u : 0u;",
                 _ =>  UnknownInstr(i, $"SPECIAL fn=0x{fn:X2}")
@@ -121,27 +140,39 @@ public static class InstructionEmitter
 
         if (op is 2 or 3 or 4 or 5 or 6 or 7) return ""; //thej umps and branches are handled in EmitWithDelaySlot to process with the delayslot
 
+        // I-type ALU with sp as source is address-of-local math — skip like R-type.
+        string CpuI(string call) => rs == 29 ? "" : PgxpCpu(rt, call);
         return (int)op switch
         {
-            8  or 9 =>  rt == 0 ? "" : rs == 0 ? $"{RT} = 0x{unchecked((uint)(int)imm):X8}u;" : imm >= 0 ? $"{RT} = {RS} + 0x{(uint)imm:X}u;" : $"{RT} = {RS} - 0x{unchecked((uint)(-(int)imm)):X}u;",
+            8  or 9 =>  rt == 0 ? "" : CpuI($"CpuAddi({rt}, {rs}, {RS}, 0x{unchecked((uint)(int)imm):X8}u)") + (rs == 0 ? $"{RT} = 0x{unchecked((uint)(int)imm):X8}u;" : imm >= 0 ? $"{RT} = {RS} + 0x{(uint)imm:X}u;" : $"{RT} = {RS} - 0x{unchecked((uint)(-(int)imm)):X}u;"),
             10 => rt == 0 ? "" : $"{RT} = (int){RS} < {(int)imm} ? 1u : 0u;",
             11 => rt == 0 ? "" : $"{RT} = {RS} < 0x{(uint)(int)imm:X8}u ? 1u : 0u;",
-            12 => rt == 0 ? "" : $"{RT} = {RS} & 0x{immU:X4}u;",
-            13 => rt == 0 ? "" : immU == 0 ? $"{RT} = {RS};" : $"{RT} = {RS} | 0x{immU:X4}u;",
-            14 => rt == 0 ? "" : $"{RT} = {RS} ^ 0x{immU:X4}u;",
-            15 => rt == 0 ? "" : $"{RT} = 0x{(uint)immU << 16:X8}u;",
+            12 => rt == 0 ? "" : CpuI($"CpuAndi({rt}, {rs}, {RS}, 0x{immU:X4}u)") + $"{RT} = {RS} & 0x{immU:X4}u;",
+            13 => rt == 0 ? "" : CpuI($"CpuOri({rt}, {rs}, {RS}, 0x{immU:X4}u)") + (immU == 0 ? $"{RT} = {RS};" : $"{RT} = {RS} | 0x{immU:X4}u;"),
+            14 => rt == 0 ? "" : CpuI($"CpuXori({rt}, {rs}, {RS}, 0x{immU:X4}u)") + $"{RT} = {RS} ^ 0x{immU:X4}u;",
+            15 => rt == 0 ? "" : PgxpCpu(rt, $"CpuLui({rt}, 0x{(uint)immU << 16:X8}u)") + $"{RT} = 0x{(uint)immU << 16:X8}u;",
             32 => rt == 0 ? "" : $"{RT} = (uint)(sbyte)m.ReadU8({Addr(rs, imm)});",
-            33 => rt == 0 ? "" : $"{RT} = (uint)(short)m.ReadU16({Addr(rs, imm)});",
-            34 => rt == 0 ? "" : $"{RT} = m.ReadWordLeft({RT}, {Addr(rs, imm)});",
-            35 => rt == 0 ? "" : $"{RT} = m.ReadU32({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLw({rt}, {Addr(rs, imm)}, {RT});",
+            // rt==rs (pointer-chase load, e.g. `lw v0,0(v0)`): the load clobbers
+            // the base register, so the address must be captured BEFORE the load
+            // for the Pgxp annotation — this is THE bulk vertex-copy idiom in
+            // KF2's far-mesh renderer (transformed-vertex ptr -> packet).
+            33 => rt == 0 ? "" : rt == rs ? $"{{ uint _a = {Addr(rs, imm)}; {RT} = (uint)(short)m.ReadU16(_a); RecompOne.Runtime.Pgxp.RegLh({rt}, _a, {RT}, true); }}" : $"{RT} = (uint)(short)m.ReadU16({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLh({rt}, {Addr(rs, imm)}, {RT}, true);",
+            // lwl/lwr + swl/swr (psyq's copy idiom, e.g. KF2's primitive processors
+            // moving transformed vertices into stack arrays): when the runtime
+            // address makes the op a FULL-word access (lwl/swl at offset 3,
+            // lwr/swr at offset 0), it behaves exactly like lw/sw — annotate it
+            // so precision follows the copy. Partial accesses leave the map
+            // stale, which self-rejects by value on the next use.
+            34 => rt == 0 ? "" : $"{{ uint _a = {Addr(rs, imm)}; {RT} = m.ReadWordLeft({RT}, _a); if ((_a & 3u) == 3u) RecompOne.Runtime.Pgxp.RegLw({rt}, _a - 3u, {RT}); }}",
+            35 => rt == 0 ? "" : rt == rs ? $"{{ uint _a = {Addr(rs, imm)}; {RT} = m.ReadU32(_a); RecompOne.Runtime.Pgxp.RegLw({rt}, _a, {RT}); }}" : $"{RT} = m.ReadU32({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLw({rt}, {Addr(rs, imm)}, {RT});",
             36 => rt == 0 ? "" : $"{RT} = m.ReadU8({Addr(rs, imm)});",
-            37 => rt == 0 ? "" : $"{RT} = m.ReadU16({Addr(rs, imm)});",
-            38 => rt == 0 ? "" : $"{RT} = m.ReadWordRight({RT}, {Addr(rs, imm)});",
+            37 => rt == 0 ? "" : rt == rs ? $"{{ uint _a = {Addr(rs, imm)}; {RT} = m.ReadU16(_a); RecompOne.Runtime.Pgxp.RegLh({rt}, _a, {RT}, false); }}" : $"{RT} = m.ReadU16({Addr(rs, imm)}); RecompOne.Runtime.Pgxp.RegLh({rt}, {Addr(rs, imm)}, {RT}, false);",
+            38 => rt == 0 ? "" : $"{{ uint _a = {Addr(rs, imm)}; {RT} = m.ReadWordRight({RT}, _a); if ((_a & 3u) == 0u) RecompOne.Runtime.Pgxp.RegLw({rt}, _a, {RT}); }}",
             40 => $"m.WriteU8({Addr(rs, imm)}, (byte){RT});",
-            41 => $"m.WriteU16({Addr(rs, imm)}, (ushort){RT});",
-            42 => $"m.WriteWordLeft({Addr(rs, imm)}, {RT});",
+            41 => $"m.WriteU16({Addr(rs, imm)}, (ushort){RT}); RecompOne.Runtime.Pgxp.RegSh({rt}, {Addr(rs, imm)}, {RT});",
+            42 => $"{{ uint _a = {Addr(rs, imm)}; m.WriteWordLeft(_a, {RT}); if ((_a & 3u) == 3u) RecompOne.Runtime.Pgxp.RegSw({rt}, _a - 3u, {RT}); }}",
             43 => $"m.WriteU32({Addr(rs, imm)}, {RT}); RecompOne.Runtime.Pgxp.RegSw({rt}, {Addr(rs, imm)}, {RT});",
-            46 => $"m.WriteWordRight({Addr(rs, imm)}, {RT});",
+            46 => $"{{ uint _a = {Addr(rs, imm)}; m.WriteWordRight(_a, {RT}); if ((_a & 3u) == 0u) RecompOne.Runtime.Pgxp.RegSw({rt}, _a, {RT}); }}",
             50 => rt is >= 12 and <= 15 ? $"RecompOne.Runtime.Gte.LoadWord({rt}, m.ReadU32({Addr(rs, imm)})); RecompOne.Runtime.Pgxp.Lwc2({rt}, {Addr(rs, imm)}, m.ReadU32({Addr(rs, imm)}));" : $"RecompOne.Runtime.Gte.LoadWord({rt}, m.ReadU32({Addr(rs, imm)}));",
             58 => rt is >= 12 and <= 15 ? $"m.WriteU32({Addr(rs, imm)}, RecompOne.Runtime.Gte.StoreWord({rt})); RecompOne.Runtime.Pgxp.Swc2({rt}, {Addr(rs, imm)});" : $"m.WriteU32({Addr(rs, imm)}, RecompOne.Runtime.Gte.StoreWord({rt}));",
             _ =>  UnknownInstr(i, $"op=0x{op:X2}")
