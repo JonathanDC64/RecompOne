@@ -16,6 +16,7 @@ internal static class HostWindow
     static IWindow? _window;
     static GL? _gl;
     static ImGuiController? _imgui;
+
     static bool _headless;
     static Gpu? _gpu;
 
@@ -26,6 +27,7 @@ internal static class HostWindow
 
     static byte[] _rgbDisplay = [];
     static byte[] _rgbVram = [];
+    static int _dbgGpuFrame;
     static byte[] _ramFront = new byte[Memory.RamLogger.Width * Memory.RamLogger.Height * 4];
     static byte[] _ramBack = new byte[Memory.RamLogger.Width * Memory.RamLogger.Height * 4];
     static Task? _ramTask;
@@ -87,6 +89,7 @@ internal static class HostWindow
             ConfigManager.SaveView(PanelManager.Panels);
         }
         _window.DoRender();
+        MarkRendered();
     }
 
     internal static void Pump()
@@ -95,6 +98,42 @@ internal static class HostWindow
         try { _window.DoEvents(); } catch { }
         if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
         _window.DoRender();
+        MarkRendered();
+    }
+
+    static readonly System.Diagnostics.Stopwatch _inputPumpClock = System.Diagnostics.Stopwatch.StartNew();
+    static long _lastInputPumpMs = -100;
+    // Timestamp of the last real present (Present/Pump/DoRender). Used to detect
+    // when the normal VSync->PresentFrame path has stalled — see PumpInput.
+    static long _lastRenderMs = -1000;
+    static void MarkRendered() => _lastRenderMs = _inputPumpClock.ElapsedMilliseconds;
+
+    // Pump host events + input from a busy pad-poll loop. Games that busy-poll
+    // the pad without yielding to VSync would otherwise never capture input (and
+    // the OS window would show "Not Responding"). Throttled to keep DoEvents
+    // cheap when called from a tight poll loop.
+    public static void PumpInput()
+    {
+        if (_headless || _window == null) return;
+        // Honor a pending screenshot even while the game is stuck in a non-VSync
+        // poll loop (menus, load waits) — force a render so OnRender can capture.
+        if (BotControl.ShotPath != null || BotControl.VramShotPath != null) { try { _window.DoRender(); } catch { } MarkRendered(); }
+        long now = _inputPumpClock.ElapsedMilliseconds;
+        if (now - _lastInputPumpMs < 2) return;
+        _lastInputPumpMs = now;
+        try { _window.DoEvents(); } catch { }
+        if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
+        InputManager.Poll();
+        // If the game is busy-polling the pad without yielding to VSync (the NPC
+        // dialogue wait loop, func_800441D4, spins on PadRead and draws the text
+        // box once but never flips), the normal present path never runs, so the
+        // window would freeze on a stale frame with the just-drawn dialogue
+        // unseen — and the ImGui menus (drawn in DoRender) can't be interacted
+        // with. Present here once the render path has gone stale (~66Hz) so the
+        // dialogue shows and the window stays live. During normal gameplay
+        // PresentFrame renders every frame, keeping _lastRenderMs fresh, so this
+        // never fires.
+        if (now - _lastRenderMs > 15) { try { _window.DoRender(); } catch { } MarkRendered(); }
     }
 
     public static void Shutdown()
@@ -144,12 +183,20 @@ internal static class HostWindow
         _vramTex= CreateTexture(_gl);
         _ramTex = CreateTexture(_gl);
 
-        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : 4;
+        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : Math.Clamp(ConfigManager.View.InternalScale, 1, 8);
+        Console.WriteLine($"[scale] internal={Hle.GlVram.Scale}x (config={ConfigManager.View.InternalScale}, native={ConfigManager.View.NativeResolution})");
         _glBackend = new Hle.GlBackend(_gl);
         _glBackend.InitGl();
         Hle.GpuHle.Active = _glBackend.Ready;
         Hle.GpuHle.Backend = _glBackend;
         Hle.GpuHle.NativeResolution = ConfigManager.View.NativeResolution;
+        if (ConfigManager.View.PgxpGeometryCorrection) Pgxp.Enabled = true;
+        Pgxp.CpuMode = ConfigManager.View.PgxpCpuMode;
+        Pgxp.PerspectiveTextures = ConfigManager.View.PgxpPerspectiveTextures;
+        Pgxp.PerspectiveColors = ConfigManager.View.PgxpPerspectiveColors;
+        Pgxp.CullingCorrection = ConfigManager.View.PgxpCullingCorrection;
+        Hle.GpuHle.TextureFilter = ConfigManager.View.TextureFilter;
+        Hle.GpuHle.SpriteTextureFilter = ConfigManager.View.SpriteTextureFilter;
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 
@@ -208,6 +255,8 @@ internal static class HostWindow
             PanelManager.Get<MemoryEditorPanel>()?.IsOpen == true;
 
         var gpu = _gpu;
+        if (gpu != null && (++_dbgGpuFrame % 120 == 0))
+            Console.WriteLine($"[gpu] dispEnabled={gpu.DisplayEnabled} x={gpu.DisplayX} y={gpu.DisplayY} w={gpu.DisplayWidth} h={gpu.DisplayHeight} 24bit={gpu.Display24Bit} hleActive={Hle.GpuHle.Active} glReady={_glBackend?.Ready}");
         if (gpu != null)
         {
 
@@ -244,10 +293,39 @@ internal static class HostWindow
         DrawDockspace();
         PanelManager.DrawPanels();
         MenuRegistry.DrawWindows();
+        PanelManager.OverlayDraw?.Invoke();
         Modding.ModLoadingPopup.Draw();
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         gl.Viewport(0, 0, (uint)fbDef.X, (uint)fbDef.Y);
         _imgui.Render();
+
+        if (BotControl.ShotPath is string sp)
+        {
+            BotControl.ShotPath = null;
+            try { CaptureScreenshot(gl, sp); }
+            catch (Exception e) { Console.WriteLine($"[bot] screenshot failed: {e.Message}"); }
+        }
+
+        if (BotControl.VramShotPath is string vsp)
+        {
+            BotControl.VramShotPath = null;
+            try { RecompOne.Runtime.Hle.GpuHle.Backend?.DumpVram(vsp); }
+            catch (Exception e) { Console.WriteLine($"[bot] vramshot failed: {e.Message}"); }
+        }
+    }
+
+    static unsafe void CaptureScreenshot(Silk.NET.OpenGL.GL gl, string path)
+    {
+        var fb = _window!.FramebufferSize;
+        int w = fb.X, h = fb.Y;
+        var buf = new byte[w * h * 3];
+        gl.PixelStore(Silk.NET.OpenGL.PixelStoreParameter.PackAlignment, 1);
+        fixed (byte* p = buf)
+            gl.ReadPixels(0, 0, (uint)w, (uint)h, Silk.NET.OpenGL.PixelFormat.Rgb, Silk.NET.OpenGL.PixelType.UnsignedByte, p);
+        var flip = new byte[w * h * 3];
+        for (int y = 0; y < h; y++) Array.Copy(buf, (h - 1 - y) * w * 3, flip, y * w * 3, w * 3);
+        BotControl.WritePng(path, w, h, flip);
+        Console.WriteLine($"[bot] screenshot -> {path} ({w}x{h})");
     }
 
     static void DrawDockspace()

@@ -8,6 +8,12 @@ public static class GpuHle
     public static float WideAspect { get; set; }
     public static float OutputAspect { get; set; } = 4f / 3f;
     public static bool NativeResolution { get; set; }
+
+    // Bilinear texture filtering (manual CLUT-aware bilinear in the prim fragment
+    // shader). Runtime-switchable; off = nearest (PS1 look). Split like DuckStation:
+    // TextureFilter = 3D world polygons; SpriteTextureFilter = 2D rects/sprites/UI.
+    public static bool TextureFilter { get; set; }
+    public static bool SpriteTextureFilter { get; set; }
     public static float TargetAspect { get; set; } = 4f / 3f;
     public const float BaseAspect = 4f / 3f;
 
