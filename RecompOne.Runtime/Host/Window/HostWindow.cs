@@ -124,16 +124,21 @@ internal static class HostWindow
         try { _window.DoEvents(); } catch { }
         if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
         InputManager.Poll();
-        // If the game is busy-polling the pad without yielding to VSync (the NPC
-        // dialogue wait loop, func_800441D4, spins on PadRead and draws the text
-        // box once but never flips), the normal present path never runs, so the
-        // window would freeze on a stale frame with the just-drawn dialogue
-        // unseen — and the ImGui menus (drawn in DoRender) can't be interacted
-        // with. Present here once the render path has gone stale (~66Hz) so the
-        // dialogue shows and the window stays live. During normal gameplay
-        // PresentFrame renders every frame, keeping _lastRenderMs fresh, so this
-        // never fires.
-        if (now - _lastRenderMs > 15) { try { _window.DoRender(); } catch { } MarkRendered(); }
+        // Present once the render path has gone stale (~66Hz) so the drawn
+        // dialogue shows and the ImGui menus stay interactive. During normal
+        // gameplay PresentFrame renders every frame, keeping _lastRenderMs fresh,
+        // so this never fires.
+        if (now - _lastRenderMs > 15)
+        {
+            // If a busy-poll (NPC dialogue func_800441D4, holding the menu button)
+            // is starving the world loop's per-frame servicing, keep the vblank
+            // IRQ / audio / CD alive (music sequencer, etc.) at this present
+            // cadence — matching the game's normal frame rate. It self-skips when
+            // the game is still ticking VSync, so normal play/menus aren't doubled.
+            Runtime.PumpBusyFrameServices();
+            try { _window.DoRender(); } catch { }
+            MarkRendered();
+        }
     }
 
     public static void Shutdown()

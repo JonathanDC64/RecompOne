@@ -123,6 +123,70 @@ public static class Runtime
     // window responsive and lets bot/screenshot commands work while the game spins).
     public static void PumpHost() => HostWindow.PumpInput();
 
+    // Per-frame interrupt/audio/CD servicing for busy-wait loops that never reach
+    // the world loop's VSync (NPC dialogue box, holding the menu button, load
+    // waits). PresentFrame normally fires the vblank event each frame, which is
+    // what ticks the game's VSync-callback sound driver / music sequencer; while
+    // the game spins in a pad-poll that path stops, so the sequencer freezes and
+    // the SPU just repeats the last-keyed notes. Firing it here at the poll's
+    // present cadence (~60Hz, from HostWindow.PumpInput) mirrors real hardware,
+    // where the vblank IRQ keeps firing through the busy-wait. Does the servicing
+    // subset of PresentFrame only — NOT the present (PumpInput renders), pad
+    // refresh (would re-enter PadRead), or frame throttle (would sleep the poll).
+    // Game-supplied VSync-callback dispatcher (KF2 func_80079038) — bumps the
+    // VSync counter and calls each registered VSync callback, incl. the sound
+    // driver's tick. The game's frame loop drives it at 60Hz; a busy-poll stalls
+    // it, freezing the music sequencer. We pump it during stalls. A delegate (not
+    // an address) because it's directly-called, not a registered indirect target.
+    public static Action<Context.CpuContext, Memory.IMemory>? AuxAudioTick;
+
+    // Address of the counter AuxAudioTick increments (KF2 0x8009C07C). Lets us
+    // tell whether the GAME is still advancing VSync itself (a menu that keeps
+    // rendering, brief dialogue transitions): if so we must NOT also pump, or the
+    // sound driver ticks twice and the music plays fast. 0 = always pump.
+    public static uint VSyncCounterAddr;
+
+    static bool _inBusyService;
+    static uint _lastSeenVSyncCtr;
+
+    // Call once per present (~the game's normal frame cadence) from a busy-poll.
+    public static void PumpBusyFrameServices()
+    {
+        if (_inBusyService || Cpu == null || Mem == null) return;
+
+        // If the game advanced the VSync counter since our last pump, its own
+        // frame loop is still servicing audio/frame (a menu that keeps rendering,
+        // brief dialogue transitions) — don't double it, or the sound driver
+        // ticks twice and the music plays fast. Only pump when truly stalled.
+        if (VSyncCounterAddr != 0)
+        {
+            uint cur = Mem.ReadU32(VSyncCounterAddr);
+            if (cur != _lastSeenVSyncCtr) { _lastSeenVSyncCtr = cur; return; }
+        }
+
+        _inBusyService = true;
+        try
+        {
+            Audio.Attach(Spu);
+            Cd?.AdvanceStreaming();
+            Sdk.LibCd.Tick();
+            PumpCdIsr();
+            PumpCdDataReadyFallback();
+            // psyq vblank event (RootCounter 3, EvSpINT).
+            Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
+            // VSync callbacks (music sequencer). Snapshot/restore so ticking it
+            // doesn't clobber the poll's registers.
+            if (AuxAudioTick != null)
+            {
+                var snap = Cpu.Snapshot();
+                AuxAudioTick(Cpu, Mem);
+                Cpu.Restore(snap);
+            }
+            if (VSyncCounterAddr != 0) _lastSeenVSyncCtr = Mem.ReadU32(VSyncCounterAddr);
+        }
+        finally { _inBusyService = false; }
+    }
+
     public static void DispatchIrq(int irq)
     {
         if (Cpu != null && Mem != null)
