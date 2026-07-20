@@ -349,6 +349,16 @@ internal static class HostWindow
         Hle.GpuHle.AnisoLevel = ConfigManager.View.AnisoLevel;
         ApplyWindowMode(ConfigManager.View.WindowMode);
 
+        // Publish the active monitor's refresh rate so frame pacing can cap the
+        // present rate at what the display can actually show.
+        try
+        {
+            var mon = _window.Monitor ?? Silk.NET.Windowing.Monitor.GetMainMonitor(_window);
+            Runtime.MonitorRefreshHz = mon.VideoMode.RefreshRate ?? 0;
+            Console.WriteLine($"[display] monitor refresh = {Runtime.MonitorRefreshHz:F0} Hz");
+        }
+        catch { }
+
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 
         PanelManager.Register(new OutputPanel());

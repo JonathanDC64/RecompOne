@@ -153,6 +153,23 @@ public static class Runtime
     // callback and crashing. Null = no gate.
     public static string? AuxAudioTickOverlay;
 
+    // The active monitor's refresh rate in Hz, published by the host once the
+    // window exists (0 if unknown). Pacing uses it to cap the present rate at
+    // the display's real refresh so a high fps target isn't wasted rendering
+    // frames the monitor can't show.
+    public static double MonitorRefreshHz;
+
+    // Ceiling (Hz) for the host present throttle (FrameClock). Published by the
+    // game's pacing so a >60 fps delta-time target isn't dragged back to 60 by a
+    // fixed throttle, while menus/FMVs (which present outside the world pacer)
+    // still can't free-run. Default 60; never let it fall below 60.
+    public static double PresentCapHz = 60;
+
+    // Bumped once per world tick by the game's pacer. FrameClock watches it to
+    // tell whether the world pacer is driving frames (so it shouldn't also
+    // throttle) or the game is presenting outside it (menus/FMVs → do throttle).
+    public static uint WorldTickSeq;
+
     static bool _inBusyService;
     static uint _lastSeenVSyncCtr;
 
