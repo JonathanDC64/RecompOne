@@ -146,6 +146,13 @@ public static class Runtime
     // sound driver ticks twice and the music plays fast. 0 = always pump.
     public static uint VSyncCounterAddr;
 
+    // Overlay that must be active for AuxAudioTick to be safe to call. It's a
+    // function in a specific overlay (KF2's GAME.EXE); calling it while a
+    // different overlay is active (e.g. OPEN.EXE's boot FMVs) reads that
+    // overlay's memory as if it were GAME's — dispatching a garbage VSync
+    // callback and crashing. Null = no gate.
+    public static string? AuxAudioTickOverlay;
+
     static bool _inBusyService;
     static uint _lastSeenVSyncCtr;
 
@@ -174,9 +181,11 @@ public static class Runtime
             PumpCdDataReadyFallback();
             // psyq vblank event (RootCounter 3, EvSpINT).
             Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
-            // VSync callbacks (music sequencer). Snapshot/restore so ticking it
-            // doesn't clobber the poll's registers.
-            if (AuxAudioTick != null)
+            // VSync callbacks (music sequencer). Only when its overlay is active
+            // (else it reads another overlay's memory and dispatches garbage).
+            // Snapshot/restore so ticking it doesn't clobber the poll's registers.
+            if (AuxAudioTick != null
+                && (AuxAudioTickOverlay == null || Dispatch.Dispatcher.IsActive(AuxAudioTickOverlay)))
             {
                 var snap = Cpu.Snapshot();
                 AuxAudioTick(Cpu, Mem);

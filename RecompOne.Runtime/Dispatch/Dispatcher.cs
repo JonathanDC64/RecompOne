@@ -39,6 +39,11 @@ public static class Dispatcher
     {
         get { lock (_active) return _active.ToArray(); }
     }
+
+    public static bool IsActive(string name)
+    {
+        lock (_active) return _active.Contains(name, StringComparer.OrdinalIgnoreCase);
+    }
     
     public static IReadOnlyDictionary<string, IOverlay> Overlays => _registry;
 
