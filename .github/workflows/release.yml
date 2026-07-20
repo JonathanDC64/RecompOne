@@ -1,0 +1,61 @@
+name: release
+
+# Publish a GitHub Release when a version tag is pushed, e.g.:
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Assets:
+#   - recompone-<tag>-win-x64.zip : self-contained recompiler CLI (no .NET needed).
+#     Published as a folder, NOT single-file: MonoMod (detours) and the Roslyn
+#     ModCompiler (uses Assembly.Location) both misbehave in single-file apps.
+# GitHub also auto-attaches the source archives to the release; King's Field
+# Suite pins this tag as a submodule and builds the engine from that source.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build a release for'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: echo "tag=${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish self-contained recompiler (win-x64 folder)
+        run: >
+          dotnet publish RecompOne.Recompiler/RecompOne.Recompiler.csproj
+          -c Release -r win-x64 --self-contained
+          -o publish/recompiler
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          tag="${{ steps.tag.outputs.tag }}"
+          (cd publish/recompiler && 7z a -tzip "../../dist/recompone-${tag}-win-x64.zip" .)
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: RecompOne ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/recompone-${{ steps.tag.outputs.tag }}-win-x64.zip
