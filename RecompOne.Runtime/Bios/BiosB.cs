@@ -17,7 +17,6 @@ public static class BiosB
     public static uint IntrEnvInInterruptAddr = 0u;
 
     static uint _padBuf;
-    static ushort _dbgLastPad = 0xFFFF;
 
     public static void DeliverEvent(uint @class, uint spec)
     {
@@ -26,22 +25,13 @@ public static class BiosB
                 _evCBs[i].Status = 4u;
     }
     
-    static readonly bool EvLog = Environment.GetEnvironmentVariable("KF2_EVLOG") == "1";
-    static int _evLogN;
-
     public static void DeliverEventIntr(CpuContext c, IMemory m, uint @class, uint spec)
     {
-        bool log = EvLog && @class == 0xF0000003u && _evLogN < 4000;
-        int hit = 0;
         for (int i = 0; i < MaxEvents; i++)
         {
             if (_evCBs[i].Status != 2u || _evCBs[i].Class != @class || _evCBs[i].Spec != spec) continue;
-            hit++;
             if ((_evCBs[i].Mode & 0x1000u) != 0 && _evCBs[i].Func != 0u)
             {
-                // only log unusual handlers (the two world-queue ones fire constantly)
-                if (log && _evCBs[i].Func != 0x800196E8u && _evCBs[i].Func != 0x80019848u)
-                { Console.WriteLine($"[ev] cd spec=0x{spec:X} -> call 0x{_evCBs[i].Func:X8}"); _evLogN++; }
                 var snap = c.Snapshot();
                 RecompOne.Runtime.Dispatch.Dispatcher.Call(c, m, _evCBs[i].Func);
                 c.Restore(snap);
@@ -51,7 +41,6 @@ public static class BiosB
                 _evCBs[i].Status = 4u;
             }
         }
-        if (log && hit == 0) { Console.WriteLine($"[ev] cd spec=0x{spec:X} -> NO MATCH"); _evLogN++; }
     }
     
     public static void CardComplete(CpuContext c, IMemory m, uint port)
@@ -98,16 +87,9 @@ public static class BiosB
     static void PadRead(IMemory m)
     {
         if (_padBuf == 0) return;
-        // Capture host input even when the game busy-polls the pad without
-        // yielding to VSync (common on "Press Start" / menu waits).
-        RecompOne.Runtime.Host.HostWindow.PumpInput();
-        // active-low: a button is pressed if the keyboard OR the bot injects it
-        ushort s = (ushort)(Hardware.Controller.State & RecompOne.Runtime.Host.BotControl.InjectMask);
-        if (s != _dbgLastPad) { _dbgLastPad = s; Console.WriteLine($"[pad] state=0x{s:X4} pressed=0x{(ushort)~s:X4}"); }
+        ushort s = Hardware.Controller.State;
         ushort swapped = (ushort)((s >> 8) | (s << 8));
-        ushort s2 = Hardware.Controller.State2;
-        ushort swapped2 = (ushort)((s2 >> 8) | (s2 << 8));
-        m.WriteU32(_padBuf,     ((uint)swapped2 << 16) | swapped);
+        m.WriteU32(_padBuf,     0xFFFF0000u | swapped);
         m.WriteU8(_padBuf + 4, Hardware.Controller.RightX);
         m.WriteU8(_padBuf + 5, Hardware.Controller.RightY);
         m.WriteU8(_padBuf + 6, Hardware.Controller.LeftX);
@@ -127,10 +109,7 @@ public static class BiosB
             case 0x04: break;
             case 0x05: break;
             case 0x06: break;
-            // DeliverEvent must invoke EvMdINTR callbacks (games register event
-            // handlers, e.g. KF2's CD stream-queue advancer on HwCdRom EvSpCOMP);
-            // the polling-only DeliverEvent would leave those handlers never run.
-            case 0x07: DeliverEventIntr(c, m, c.A0, c.A1); break;
+            case 0x07: DeliverEvent(c.A0, c.A1); break;
             case 0x08: c.V0 = OpenEvent(c.A0, c.A1, c.A2, c.A3); break;
             case 0x09: CloseEvent(c.A0); c.V0 = 1u; break;
             case 0x0A: c.V0 = WaitEvent(c.A0); break;
@@ -216,12 +195,9 @@ public static class BiosB
             if (_evCBs[i].Status == 0u)
             {
                 _evCBs[i] = new EvCB { Status = 1u, Class = @class, Spec = spec, Mode = mode, Func = func };
-                if (EvLog && @class == 0xF0000003u)
-                    Console.WriteLine($"[ev] OPEN slot={i} spec=0x{spec:X} mode=0x{mode:X} func=0x{func:X8}");
                 return 0xF0000000u | (uint)i;
             }
         }
-        if (EvLog) Console.WriteLine($"[ev] OPEN FAILED (table full) class=0x{@class:X8} spec=0x{spec:X}");
         return 0xFFFFFFFFu;
     }
 
@@ -234,12 +210,7 @@ public static class BiosB
     static void CloseEvent(uint ev)
     {
         int s = EvSlot(ev);
-        if (s >= 0)
-        {
-            if (EvLog && _evCBs[s].Class == 0xF0000003u)
-                Console.WriteLine($"[ev] CLOSE slot={s} spec=0x{_evCBs[s].Spec:X} func=0x{_evCBs[s].Func:X8}");
-            _evCBs[s] = default;
-        }
+        if (s >= 0) _evCBs[s] = default;
     }
 
     static uint WaitEvent(uint ev)
@@ -259,12 +230,7 @@ public static class BiosB
     static void EnableEvent(uint ev)
     {
         int s = EvSlot(ev);
-        if (s >= 0)
-        {
-            if (EvLog && _evCBs[s].Class == 0xF0000003u)
-                Console.WriteLine($"[ev] ENABLE slot={s} spec=0x{_evCBs[s].Spec:X} func=0x{_evCBs[s].Func:X8}");
-            _evCBs[s].Status = 2u;
-        }
+        if (s >= 0) _evCBs[s].Status = 2u;
     }
 
     static void DisableEvent(uint ev)

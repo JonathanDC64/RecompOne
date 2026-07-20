@@ -112,27 +112,24 @@ public sealed class Spu
         public short AdsrVol;
 
         public uint CurAddr;
+        public int SampleIndex;
         public uint PitchCounter;
         public AdsrPhase Phase = AdsrPhase.Off;
         public int AdsrCycleCount;
         public bool EndX;
         public bool IgnoreLoop;
-        public bool HasBlock;
 
         public int Old, Older;
 
-        public short CurVolL, CurVolR;
-        public int VolCycL, VolCycR;
-
-        public readonly short[] Buf = new short[31];
+        public readonly short[] Buf = new short[28];
+        public readonly short[] Ring = new short[4];
+        public int RingPos;
     }
 
     readonly Voice[] _v = new Voice[24];
     readonly object _sync = new();
 
     ushort _mainVolL, _mainVolR;
-    short _mainCurL, _mainCurR;
-    int _mainCycL, _mainCycR;
     ushort _reverbVolL, _reverbVolR;
     ushort _kon, _konHi;
     ushort _koff, _koffHi;
@@ -267,9 +264,6 @@ public sealed class Spu
         }
     }
 
-    static readonly bool SpuLog = Environment.GetEnvironmentVariable("KF2_SPULOG") == "1";
-    static int _spuLogN;
-
     void KeyOn(ushort mask, bool hi)
     {
         int b = hi ? 16 : 0;
@@ -277,16 +271,16 @@ public sealed class Spu
         {
             if ((mask & (1 << i)) == 0) continue;
             var v = _v[b + i];
-            if (SpuLog && _spuLogN < 300)
-            { Console.WriteLine($"[spu] keyon v{b + i} volL=0x{v.VolL:X4} volR=0x{v.VolR:X4} pitch=0x{v.Pitch:X4} adsr={v.AdsrHi:X4}{v.AdsrLo:X4} start=0x{(uint)v.StartAddr << 3:X5} main=0x{_mainVolL:X4}/0x{_mainVolR:X4} cd=0x{_cdVolL:X4}/0x{_cdVolR:X4}"); _spuLogN++; }
             v.Phase = AdsrPhase.Attack;
             v.AdsrVol = 0;
             v.AdsrCycleCount = 0;
             v.CurAddr = (uint)v.StartAddr << 3;
             v.IgnoreLoop = false;
+            v.SampleIndex = 28;
             v.PitchCounter = 0;
             v.Old = v.Older = 0;
-            v.HasBlock = false;
+            Array.Clear(v.Ring);
+            v.RingPos = 0;
             v.EndX = false;
             _endx &= ~(1u << (b + i));
         }
@@ -364,11 +358,10 @@ public sealed class Spu
     {
         lock (_sync)
         {
+            int mainL = VolFactor(_mainVolL);
+            int mainR = VolFactor(_mainVolR);
             for (int n = 0; n < frames; n++)
             {
-                SweepTick(_mainVolL, ref _mainCurL, ref _mainCycL);
-                SweepTick(_mainVolR, ref _mainCurR, ref _mainCycR);
-
                 var (l, r) = Tick();
                 int mixL = l, mixR = r;
                 if (XaAudio.Next(out short xl, out short xr))
@@ -376,8 +369,8 @@ public sealed class Spu
                     mixL += xl * (short)_cdVolL >> 15;
                     mixR += xr * (short)_cdVolR >> 15;
                 }
-                mixL = Math.Clamp(mixL, -32768, 32767) * _mainCurL >> 15;
-                mixR = Math.Clamp(mixR, -32768, 32767) * _mainCurR >> 15;
+                mixL = Math.Clamp(mixL, -32768, 32767) * mainL >> 15;
+                mixR = Math.Clamp(mixR, -32768, 32767) * mainR >> 15;
                 dst[n * 2] = (short)mixL;
                 dst[n * 2 + 1] = (short)mixR;
             }
@@ -391,60 +384,55 @@ public sealed class Spu
 
         uint nonMask = (uint)(_non  | (_nonHi  << 16));
         uint pmonMask = (uint)(_pmon | (_pmonHi << 16));
-        int prevOutx = 0;
+        int prevAmp = 0;
 
         for (int i = 0; i < 24; i++)
         {
             var v = _v[i];
-            if (v.Phase == AdsrPhase.Off) { prevOutx = 0; continue; }
+            if (v.Phase == AdsrPhase.Off) { prevAmp = 0; continue; }
 
             TickAdsr(v);
-            SweepTick(v.VolL, ref v.CurVolL, ref v.VolCycL);
-            SweepTick(v.VolR, ref v.CurVolR, ref v.VolCycR);
 
-            if (!v.HasBlock)
-            {
-                Array.Clear(v.Buf);
+            bool noise = (nonMask  & (1u << i)) != 0;
+            bool pmod = i > 0 && (pmonMask & (1u << i)) != 0;
+
+            uint pitch = v.Pitch & 0x3FFFu;
+            if (pmod) pitch = (uint)Math.Clamp((int)pitch + prevAmp, 0, 0x3FFF);
+            v.PitchCounter += pitch;
+
+            while (v.SampleIndex >= 28)
                 DecodeBlock(v, i);
-                v.HasBlock = true;
-            }
 
             int sample;
-            if ((nonMask & (1u << i)) != 0)
+            if (noise)
             {
-                sample = (short)_noiseLevel;
+                sample = _noiseLevel;
             }
             else
             {
-                int idx = (int)(v.PitchCounter >> 12);
                 int fi = (int)((v.PitchCounter >> 4) & 0xFF);
-                sample = ((Gauss[0x0FF - fi] * v.Buf[idx])     >> 15)
-                       + ((Gauss[0x1FF - fi] * v.Buf[idx + 1]) >> 15)
-                       + ((Gauss[0x100 + fi] * v.Buf[idx + 2]) >> 15)
-                       + ((Gauss[0x000 + fi] * v.Buf[idx + 3]) >> 15);
+                int ri = v.RingPos;
+                sample = (Gauss[0xFF  - fi] * v.Ring[(ri - 3) & 3]
+                        + Gauss[0x1FF - fi] * v.Ring[(ri - 2) & 3]
+                        + Gauss[0x100 + fi] * v.Ring[(ri - 1) & 3]
+                        + Gauss[0x000 + fi] * v.Ring[ri]) >> 15;
+            }
+
+            int steps = (int)(v.PitchCounter >> 12);
+            v.PitchCounter &= 0xFFFu;
+            for (int s = 0; s < steps && v.SampleIndex < 28; s++)
+            {
+                v.Ring[v.RingPos & 3] = v.Buf[v.SampleIndex++];
+                v.RingPos = (v.RingPos + 1) & 3;
             }
 
             int amp = (sample * v.AdsrVol) >> 15;
+            prevAmp = amp;
 
-            int step = v.Pitch;
-            if (i > 0 && (pmonMask & (1u << i)) != 0)
-            {
-                int factor = Math.Clamp(prevOutx, -0x8000, 0x7FFF) + 0x8000;
-                step = ((short)(ushort)step * factor >> 15) & 0xFFFF;
-            }
-            if (step > 0x3FFF) step = 0x4000;
-
-            v.PitchCounter += (uint)step;
-            if ((v.PitchCounter >> 12) >= 28)
-            {
-                v.PitchCounter -= 28u << 12;
-                DecodeBlock(v, i);
-            }
-
-            prevOutx = amp;
-
-            sumL += (amp * v.CurVolL) >> 15;
-            sumR += (amp * v.CurVolR) >> 15;
+            int volL = VolFactor(v.VolL);
+            int volR = VolFactor(v.VolR);
+            sumL += (amp * volL) >> 15;
+            sumR += (amp * volR) >> 15;
         }
 
         sumL = Math.Clamp(sumL, -32768, 32767);
@@ -452,64 +440,31 @@ public sealed class Spu
         return ((short)sumL, (short)sumR);
     }
 
-    static void SweepTick(ushort reg, ref short level, ref int cycleCount)
-    {
-        if ((reg & 0x8000) == 0)
-        {
-            level = (short)(reg << 1);
-            return;
-        }
-
-        bool exp = (reg & 0x4000) != 0;
-        bool dec = (reg & 0x2000) != 0;
-        bool neg = (reg & 0x1000) != 0;
-        int shift = (reg >> 2) & 0x1F;
-        int stepIdx = reg & 0x3;
-        EnvTick(ref level, ref cycleCount, shift, stepIdx, exp, dec, neg);
-    }
-
-    static void EnvTick(ref short level, ref int cycleCount, int shift, int stepIdx, bool exp, bool decrease, bool negPhase)
-    {
-        int mag = negPhase ? -level : level;
-        int cycles = 1 << Math.Max(0, shift - 11);
-        int step = (decrease ? AdsrStepDown : AdsrStepUp)[stepIdx] << Math.Max(0, 11 - shift);
-
-        if (exp && !decrease && mag > 0x6000) cycles *= 4;
-        if (exp && decrease) { step = step * mag / 0x8000; if (step == 0) step = -1; }
-
-        cycleCount++;
-        if (cycleCount < cycles) return;
-        cycleCount = 0;
-
-        int next = Math.Clamp(mag + step, 0, 0x7FFF);
-        level = (short)(negPhase ? -next : next);
-    }
+    static int VolFactor(ushort vol)
+        => (vol & 0x8000) != 0 ? (short)(vol << 1) : (short)(vol & 0x7FFF) << 1;
 
     void DecodeBlock(Voice v, int index)
     {
-        v.Buf[0] = v.Buf[28];
-        v.Buf[1] = v.Buf[29];
-        v.Buf[2] = v.Buf[30];
-
         uint addr = v.CurAddr & (uint)(RamSize - 1);
         byte hdr = Ram[addr];
-        byte flags = Ram[(addr + 1) & (RamSize - 1)];
+        byte flags = Ram[addr + 1];
 
         int shift = hdr & 0xF;
-        if (shift > 12) shift = 9;
         int filter = (hdr >> 4) & 0x7;
         if (filter > 4) filter = 4;
 
         int k0 = K0[filter];
         int k1 = K1[filter];
 
-        int pos = 3;
+        v.SampleIndex = 0;
         for (int i = 0; i < 14; i++)
         {
-            byte b = Ram[(addr + 2 + (uint)i) & (RamSize - 1)];
-            v.Buf[pos++] = DecodeSample(v, b & 0xF, shift, k0, k1);
-            v.Buf[pos++] = DecodeSample(v, b >> 4,  shift, k0, k1);
+            byte b = Ram[addr + 2 + i];
+            DecodeSample(v, b & 0xF, shift, k0, k1);
+            DecodeSample(v, b >> 4,  shift, k0, k1);
         }
+
+        v.SampleIndex = 0;
 
         if ((flags & 4) != 0 && !v.IgnoreLoop)
             v.RepeatAddr = (ushort)(addr >> 3);
@@ -531,15 +486,16 @@ public sealed class Spu
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static short DecodeSample(Voice v, int nibble, int shift, int k0, int k1)
+    void DecodeSample(Voice v, int nibble, int shift, int k0, int k1)
     {
         int s = (nibble << 28) >> 28;
-        s = (s << 12) >> shift;
+        s <<= 12;
+        if (shift < 13) s >>= shift; else s >>= 12;
         s += (v.Old * k0 + v.Older * k1) >> 6;
         s = Math.Clamp(s, -32768, 32767);
         v.Older = v.Old;
         v.Old = s;
-        return (short)s;
+        v.Buf[v.SampleIndex++] = (short)s;
     }
 
     void TickAdsr(Voice v)
@@ -562,16 +518,10 @@ public sealed class Spu
         int  relShift =  hi & 0x1F;
 
         if (v.Phase == AdsrPhase.Attack && v.AdsrVol >= 0x7FFF)
-        {
             v.Phase = AdsrPhase.Decay;
-            v.AdsrCycleCount = 0;
-        }
 
         if (v.Phase == AdsrPhase.Decay && v.AdsrVol <= susLvl)
-        {
             v.Phase = AdsrPhase.Sustain;
-            v.AdsrCycleCount = 0;
-        }
 
         (bool decrease, int shift, int stepIdx, bool exp) = v.Phase switch {
             AdsrPhase.Attack => (false,  atkShift, atkStep, atkExp),
@@ -581,10 +531,21 @@ public sealed class Spu
             _ => (false, 0, 0, false)
         };
 
-        EnvTick(ref v.AdsrVol, ref v.AdsrCycleCount, shift, stepIdx, exp, decrease, false);
+        int cycles = 1 << Math.Max(0, shift - 11);
+        int step = (decrease ? AdsrStepDown : AdsrStepUp)[stepIdx] << Math.Max(0, 11 - shift);
 
-        if (v.Phase == AdsrPhase.Release && v.AdsrVol == 0)
-            v.Phase = AdsrPhase.Off;
+        if (exp && !decrease && v.AdsrVol > 0x6000) cycles *= 4;
+        if (exp &&  decrease) { step = step * v.AdsrVol / 0x8000; if (step == 0) step = -1; }
+
+        v.AdsrCycleCount++;
+        if (v.AdsrCycleCount >= cycles)
+        {
+            v.AdsrCycleCount = 0;
+            int next = Math.Clamp(v.AdsrVol + step, 0, 0x7FFF);
+            v.AdsrVol = (short)next;
+            if (v.Phase == AdsrPhase.Release && next == 0)
+                v.Phase = AdsrPhase.Off;
+        }
     }
 
     void TickNoise()

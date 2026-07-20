@@ -7,7 +7,7 @@ public static class XaAudio
 
     const int Capacity = 1 << 18;
     const int Mask = Capacity - 1;
-    const int PrimeFrames = 4096; // ~93ms buffered before starting: rides out sleep jitter
+    const int PrimeFrames = 1024;
     const int MaxHold = 8192;
 
     static readonly int[] _ring = new int[Capacity];
@@ -22,13 +22,10 @@ public static class XaAudio
     static short _s0L, _s0R, _s1L, _s1R;
     static int _underrun;
 
-    static readonly bool XaLog = System.Environment.GetEnvironmentVariable("KF2_XALOG") == "1";
-
     public static void Reset()
     {
         lock (_gate)
         {
-            if (XaLog && _playing) System.Console.WriteLine("[xa] STOP (reset)");
             _oldL = _olderL = _oldR = _olderR = 0;
             _writeIdx = _readIdx = _count = 0;
             _playing = false;
@@ -98,11 +95,7 @@ public static class XaAudio
                 if (_count < Capacity) _count++;
                 else _readIdx = (_readIdx + 1) & Mask;
             }
-            if (!_playing && _count >= PrimeFrames)
-            {
-                _playing = true;
-                if (XaLog) System.Console.WriteLine($"[xa] START rate={_srcRate} buffered={_count}");
-            }
+            if (!_playing && _count >= PrimeFrames) _playing = true;
         }
     }
 
@@ -132,11 +125,7 @@ public static class XaAudio
                 }
                 else
                 {
-                    if (++_underrun > MaxHold)
-                    {
-                        if (XaLog) System.Console.WriteLine("[xa] STOP (underrun)");
-                        _playing = false; left = right = 0; return false;
-                    }
+                    if (++_underrun > MaxHold) { _playing = false; left = right = 0; return false; }
                     _s1L = (short)(_s1L * 31 / 32);
                     _s1R = (short)(_s1R * 31 / 32);
                 }

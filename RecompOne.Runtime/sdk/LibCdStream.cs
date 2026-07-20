@@ -103,43 +103,16 @@ public static class LibCdStream
 
     public static void StGetBackloc(CpuContext c, IMemory m) { c.V0 = 0xFFFFFFFFu; Log.Sdk("StGetBackloc"); }
 
-    static readonly bool XaLog = System.Environment.GetEnvironmentVariable("KF2_XALOG") == "1";
-    static int _xaSecLog;
-    static double _rate = -1; // sectors/sec override (from the hardware CD path); -1 = use LibCd's mode
-    static bool _filterOn;
-    static byte _filterFile, _filterChannel;
-
-    internal static void SetXaFilter(bool on, byte file, byte channel)
-    {
-        _filterOn = on; _filterFile = file; _filterChannel = channel;
-    }
-
-    internal static void OnReadStream(int lba, double sectorsPerSecond = -1)
+    internal static void OnReadStream(int lba)
     {
         if (!InUse) return;
-        _rate = sectorsPerSecond;
         _pendingLba = lba;
-        // A ReadS is a stream (re)start: drop any previous stream position so the
-        // loop picks up the new LBA and repaces from now. Without this a second
-        // movie resumes the first one's position with a long-elapsed clock, so the
-        // pacing gate always passes (the "old intro resumes, sped-up" bug).
-        lock (_lock)
-        {
-            _streamLba = -1;
-            _ready.Clear();                                  // stale frames of the old stream
-            if (_busy.Length > 0) System.Array.Clear(_busy); // (game hasn't consumed them)
-            _writeIdx = 0;
-            _prevStart = -1;
-            _xaSecLog = 0; // re-arm per-stream sector logging
-        }
         _reading = true;
-        _active = true; // auto-activate: some games fold StSetStream into a combined stream-start fn
         EnsureThread();
     }
 
     internal static void OnStopStream()
     {
-        if (_reading) Log.Sdk("stream stop");
         _reading = false;
     }
 
@@ -181,37 +154,17 @@ public static class LibCdStream
                 _clock.Restart();
             }
 
-            // Pace EVERY sector to the disc rate. Audio-only streams (e.g. the title
-            // jingles L0.S/L1.S) have no video frames to gate on — without this the
-            // whole file decodes at disk speed, overflowing the XA ring ("cut off").
-            // Run a few sectors AHEAD of real time so the XA buffer keeps a small
-            // cushion against thread-sleep jitter (Windows sleeps are ~16ms coarse).
-            const double Lead = 8;
-            double delivered = _clock.Elapsed.TotalSeconds * (_rate > 0 ? _rate : LibCd.SectorsPerSecond) + Lead;
-            if ((_streamLba - _streamStartLba) + 1 > delivered) { Thread.Sleep(1); continue; }
-
             byte[] sec;
             try { lock (LibCd.DiscLock) sec = cd.ReadSectorData(_streamLba, 2336); }
             catch { Thread.Sleep(2); continue; }
 
-            if ((sec[2] & 0x04) != 0)
-            {
-                // XA files interleave channels: honour the game's Setfilter so only
-                // the selected file/channel plays (decoding all channels mangles it).
-                bool pass = !_filterOn || (sec[0] == _filterFile && sec[1] == _filterChannel);
-                if (XaLog && _xaSecLog < 40)
-                { Console.WriteLine($"[xas] lba={_streamLba} file={sec[0]} ch={sec[1]} sub=0x{sec[2]:X2} coding=0x{sec[3]:X2} pass={pass} filt={_filterOn}/{_filterFile}/{_filterChannel} buf={XaAudio.BufferedSamples}"); _xaSecLog++; }
-                if (pass)
-                    XaAudio.DecodeSector(sec, 8, sec[3]);
-                _streamLba++; continue;
-            }
-            if (XaLog && _xaSecLog < 40)
-            { Console.WriteLine($"[xas] lba={_streamLba} NONAUDIO sub=0x{sec[2]:X2} magic=0x{Read16(sec, 8):X4} buf={XaAudio.BufferedSamples}"); _xaSecLog++; }
+            if ((sec[2] & 0x04) != 0) { XaAudio.DecodeSector(sec, 8, sec[3]); _streamLba++; continue; }
             if (Read16(sec, 8) != VideoMagic || Read16(sec, 12) != 0) { _streamLba++; continue; }
 
             int n = Read16(sec, 14);
             if (n <= 0 || n > _slots) { _streamLba++; continue; }
 
+            double delivered = _clock.Elapsed.TotalSeconds * LibCd.SectorsPerSecond;
             if ((_streamLba - _streamStartLba) + n > delivered) { Thread.Sleep(1); continue; }
 
             int start;
@@ -221,21 +174,7 @@ public static class LibCdStream
                 start = _writeIdx;
                 bool free = true;
                 for (int i = 0; i < n; i++) if (_busy[start + i]) { free = false; break; }
-                if (!free)
-                {
-                    // The real drive never stalls: if the game isn't consuming frames
-                    // (e.g. it only wants the XA audio of this stream — the title
-                    // jingles L0/L1.S are STR files whose video is ignored), drop the
-                    // oldest undelivered frame and keep streaming. Stalling here
-                    // starves the interleaved audio ("jingle cut off" bug).
-                    if (_ready.Count > 0)
-                    {
-                        var (os, on) = _ready.Dequeue();
-                        for (int i = 0; i < on; i++) _busy[os + i] = false;
-                    }
-                    else Thread.Sleep(1); // all frames held by the game — genuinely wait
-                    continue;
-                }
+                if (!free) { Thread.Sleep(1); continue; }
             }
 
             if (!CollectFrame(cd, m, start, n)) continue;
@@ -260,12 +199,7 @@ public static class LibCdStream
             catch { return false; }
             lba++;
 
-            if ((sec[2] & 0x04) != 0)
-            {
-                if (!_filterOn || (sec[0] == _filterFile && sec[1] == _filterChannel))
-                    XaAudio.DecodeSector(sec, 8, sec[3]);
-                continue;
-            }
+            if ((sec[2] & 0x04) != 0) { XaAudio.DecodeSector(sec, 8, sec[3]); continue; }
             if (Read16(sec, 8) != VideoMagic) continue;
 
             uint hdr = _statusBase + (uint)((start + collected) * HeaderSize);

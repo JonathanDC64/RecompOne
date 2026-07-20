@@ -7,7 +7,7 @@ public static class Log
     public static bool GpuOn = false;
     public static bool DmaOn = false;
     public static bool CdOn = false;
-    public static bool SdkOn = Environment.GetEnvironmentVariable("KF2_SDKLOG") == "1";
+    public static bool SdkOn = false;
     public static bool MdecOn = false;
 
     public static void Mdec(string m)

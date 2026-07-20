@@ -48,44 +48,8 @@ public sealed class PSMemory : IMemory
         _hwregs[o + 3] = (byte)(v >> 24);
     }
 
-    // Debug write-watch (KF2_WATCH=hexPhysStart,hexPhysEnd): print the writer of
-    // any write into the range. Deduped by writer function (each distinct func
-    // printed once) so a long play session or a per-frame writer (e.g. player
-    // position) doesn't flood the log or hide a rarer writer behind a hit cap.
-    static readonly (uint lo, uint hi)? _watch = ParseWatch();
-    static readonly HashSet<string> _watchSeen = new();
-    // KF2_WATCH_AFTER=seconds: arm the watch only after N seconds, so boot-time
-    // writers (stack regions are reused by everything) don't fill the dedup cap.
-    static readonly System.Diagnostics.Stopwatch _watchClock = System.Diagnostics.Stopwatch.StartNew();
-    static readonly long _watchAfterMs =
-        long.TryParse(Environment.GetEnvironmentVariable("KF2_WATCH_AFTER"), out var _wa) ? _wa * 1000 : 0;
-    static (uint, uint)? ParseWatch()
-    {
-        var s = Environment.GetEnvironmentVariable("KF2_WATCH");
-        if (string.IsNullOrEmpty(s)) return null;
-        var p = s.Split(',');
-        return (Convert.ToUInt32(p[0], 16), Convert.ToUInt32(p[1], 16));
-    }
-
     private void TrackWrite(uint phys, int size)
     {
-        if (_watch is { } w && phys >= w.lo && phys < w.hi && _watchSeen.Count < 200
-            && _watchClock.ElapsedMilliseconds >= _watchAfterMs)
-        {
-            var st = new System.Diagnostics.StackTrace(false);
-            // Collect the top few recompiled frames (call chain), so a generic
-            // leaf writer (memset/copy) doesn't hide the real caller logic.
-            var chain = new List<string>(4);
-            for (int i = 1; i < st.FrameCount && chain.Count < 4; i++)
-            {
-                var mth = st.GetFrame(i)?.GetMethod();
-                if (mth != null && (mth.Name.StartsWith("func_") || mth.Name.StartsWith("map_fn_") || mth.Name.StartsWith("ind_")))
-                    chain.Add(mth.Name);
-            }
-            string who = chain.Count > 0 ? string.Join(" <- ", chain) : "?";
-            if (_watchSeen.Add($"{who}:{size}"))
-                Console.WriteLine($"[watch] write phys=0x{phys:X8} size={size} by {who} (distinct #{_watchSeen.Count})");
-        }
         if (phys < MemoryMap.RamWindow)
         {
             uint off = phys % (uint)_ram.Length;

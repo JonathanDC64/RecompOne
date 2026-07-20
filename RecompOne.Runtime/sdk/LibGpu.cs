@@ -18,11 +18,7 @@ public static class LibGpu
             uint header = m.ReadU32(addr);
             uint count = header >> 24;
             for (uint i = 0; i < count; i++)
-            {
-                Gpu.NextSrcAddr = addr + 4u + i * 4u; // PGXP: RAM address of this GP0 word
                 gpu.WriteGp0(m.ReadU32(addr + 4u + i * 4u));
-            }
-            Gpu.NextSrcAddr = 0;
             uint next = header & 0xFFFFFFu;
             if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
             addr = next & 0x1FFFFCu;
@@ -109,10 +105,6 @@ public static class LibGpu
         gpu.WriteGp1(mode);
 
         GpuHle.NotifyDisplay(dispX, dispY, dispW, dispH);
-        // Ensure the display is enabled. The game's SetDispMask(1) (GP1 0x03) does
-        // not reach the GPU under recompilation; setting up a display env means the
-        // game wants output visible, so enable it here.
-        gpu.WriteGp1(0x03000000u);
         c.V0 = c.A0;
     }
 
