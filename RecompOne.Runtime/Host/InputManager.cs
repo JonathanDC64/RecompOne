@@ -26,10 +26,12 @@ internal static unsafe class InputManager
     const int RightStickDown = 109;
     static bool _topBarToggle;
     static bool _fullscreenToggle;
+    static bool _borderlessToggle;
 
-    
+
     public static bool ConsumeTopBarToggle() { var v = _topBarToggle; _topBarToggle = false; return v; }
     public static bool ConsumeFullscreenToggle(){ var v = _fullscreenToggle; _fullscreenToggle = false; return v; }
+    public static bool ConsumeBorderlessToggle(){ var v = _borderlessToggle; _borderlessToggle = false; return v; }
 
     public static void Initialize(IInputContext input)
     {
@@ -273,6 +275,10 @@ internal static unsafe class InputManager
     {
         if (key == Key.F1)  _topBarToggle = true;
         if (key == Key.F11) _fullscreenToggle = true;
+        // Alt+Enter -> borderless toggle (standard shortcut).
+        if ((key == Key.Enter || key == Key.KeypadEnter)
+            && (kb.IsKeyPressed(Key.AltLeft) || kb.IsKeyPressed(Key.AltRight)))
+            _borderlessToggle = true;
     }
 
 }

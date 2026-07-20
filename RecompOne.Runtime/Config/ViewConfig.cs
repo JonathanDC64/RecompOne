@@ -44,6 +44,14 @@ public class ViewConfig
         set => SetBool("Fullscreen", value);
     }
 
+    // 0 = Windowed, 1 = Fullscreen (exclusive), 2 = Borderless. Defaults from the
+    // legacy Fullscreen bool so existing configs keep their fullscreen setting.
+    public int WindowMode
+    {
+        get => GetInt("WindowMode", GetBool("Fullscreen") ? 1 : 0);
+        set => SetInt("WindowMode", value);
+    }
+
     public bool NativeResolution
     {
         get => GetBool("NativeResolution");

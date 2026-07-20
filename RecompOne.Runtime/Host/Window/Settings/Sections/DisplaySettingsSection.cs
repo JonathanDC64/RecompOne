@@ -11,13 +11,21 @@ internal sealed class DisplaySettingsSection : ISettingsSection
 
     public void Draw()
     {
-        bool fullscreen = ConfigManager.View.Fullscreen;
-        if (ImGui.Checkbox("Fullscreen", ref fullscreen))
+        string[] winModeNames = { "Windowed", "Fullscreen", "Borderless" };
+        int winMode = Math.Clamp(ConfigManager.View.WindowMode, 0, 2);
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.Combo("Window mode", ref winMode, winModeNames, winModeNames.Length))
         {
-            ConfigManager.View.Fullscreen = fullscreen;
-            HostWindow.SetFullscreen(fullscreen);
+            ConfigManager.View.WindowMode = winMode;
+            ConfigManager.View.Fullscreen = winMode == HostWindow.WinFullscreen; // keep legacy key in sync
+            HostWindow.ApplyWindowMode(winMode);
             ConfigManager.SaveView(PanelManager.Panels);
         }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "Windowed / Fullscreen (exclusive) / Borderless (fullscreen window,\n"
+                + "no display-mode change — smoother alt-tab). Alt+Enter toggles\n"
+                + "windowed <-> borderless.");
 
         bool native = ConfigManager.View.NativeResolution;
         if (ImGui.Checkbox("Native resolution", ref native))

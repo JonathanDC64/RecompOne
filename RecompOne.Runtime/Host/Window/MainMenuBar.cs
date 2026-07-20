@@ -34,11 +34,22 @@ internal static class MainMenuBar
                 ConfigManager.SaveView(PanelManager.Panels);
             }
 
-            bool fs = ConfigManager.View.Fullscreen;
+            bool fs = ConfigManager.View.WindowMode == HostWindow.WinFullscreen;
             if (ImGui.MenuItem("Fullscreen", "F11", fs))
             {
-                ConfigManager.View.Fullscreen = !fs;
-                HostWindow.SetFullscreen(!fs);
+                int m = fs ? HostWindow.WinWindowed : HostWindow.WinFullscreen;
+                ConfigManager.View.WindowMode = m;
+                ConfigManager.View.Fullscreen = m == HostWindow.WinFullscreen;
+                HostWindow.ApplyWindowMode(m);
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+            bool bl = ConfigManager.View.WindowMode == HostWindow.WinBorderless;
+            if (ImGui.MenuItem("Borderless", "Alt+Enter", bl))
+            {
+                int m = bl ? HostWindow.WinWindowed : HostWindow.WinBorderless;
+                ConfigManager.View.WindowMode = m;
+                ConfigManager.View.Fullscreen = false;
+                HostWindow.ApplyWindowMode(m);
                 ConfigManager.SaveView(PanelManager.Panels);
             }
 
