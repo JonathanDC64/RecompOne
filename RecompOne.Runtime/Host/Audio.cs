@@ -86,6 +86,11 @@ internal static unsafe class Audio
         }
     }
 
+    static bool _heardSound;
+    // debug: raw PCM capture of the mix (s16le stereo 44100) for offline analysis
+    static readonly string? _dumpPath = Environment.GetEnvironmentVariable("KF2_WAVDUMP");
+    static FileStream? _dump;
+
     static void FillBuffers(Spu spu)
     {
         _al!.GetSourceProperty(_source, GetSourceInteger.BuffersProcessed, out int processed);
@@ -95,6 +100,17 @@ internal static unsafe class Audio
             _al.SourceUnqueueBuffers(_source, 1, &buf);
 
             spu.Mix(_sampleBuf, FramesPerBuffer);
+            if (!_heardSound)
+                for (int i = 0; i < _sampleBuf.Length; i++)
+                    if (_sampleBuf[i] > 256 || _sampleBuf[i] < -256)
+                    { _heardSound = true; Console.WriteLine("[audio] first non-silent samples mixed"); break; }
+            if (_dumpPath != null)
+            {
+                _dump ??= File.Create(_dumpPath);
+                var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(_sampleBuf.AsSpan());
+                _dump.Write(bytes);
+                _dump.Flush();
+            }
 
             _al.BufferData(buf, BufferFormat.Stereo16, _sampleBuf, 44100);
             _al.SourceQueueBuffers(_source, 1, &buf);

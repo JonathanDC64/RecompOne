@@ -78,7 +78,11 @@ public sealed class Dma
                 uint header = _mem.ReadU32(addr);
                 uint count = header >> 24;
                 for (uint i = 0; i < count; i++)
+                {
+                    Gpu.NextSrcAddr = addr + 4u + i * 4u; // PGXP: RAM address of this GP0 word
                     _gpu.WriteGp0(_mem.ReadU32(addr + 4u + i * 4u));
+                }
+                Gpu.NextSrcAddr = 0;
                 uint next = header & 0xFFFFFFu;
                 if (next == 0xFFFFFFu || (next & 0x800000u) != 0) break;
                 addr = next & 0x1FFFFCu;
@@ -88,7 +92,11 @@ public sealed class Dma
         {
             uint words = WordCount(bcr);
             for (uint i = 0; i < words; i++)
+            {
+                Gpu.NextSrcAddr = (madr + i * 4u) & 0x1FFFFCu;
                 _gpu.WriteGp0(_mem.ReadU32(madr + i * 4u));
+            }
+            Gpu.NextSrcAddr = 0;
         }
         else
         {
@@ -110,6 +118,7 @@ public sealed class Dma
 
     void TransferCd(uint madr, uint bcr)
     {
+        RecompOne.Runtime.Log.Cd($"DMA-CD madr=0x{madr:X8} bytes={WordCount(bcr) * 4u}");
         if (_cd == null) return;
         _cd.DmaReadData(_mem, madr, WordCount(bcr) * 4u);
     }

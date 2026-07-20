@@ -32,6 +32,10 @@ public sealed partial class Gpu
     int _dmaDir;
 
     readonly List<uint> _fifo = new(16);
+    // PGXP: RAM source address of each fifo word (0 = not from DMA). Set by the
+    // GPU DMA before each WriteGp0 so vertex words can be traced back to memory.
+    public static uint NextSrcAddr;
+    readonly List<uint> _fifoSrc = new(16);
     int _need;
     bool _polyline;
 
@@ -120,12 +124,13 @@ public sealed partial class Gpu
         if (_loadImage) { StoreImageHalfword((ushort)word); StoreImageHalfword((ushort)(word >> 16)); return; }
         if (_polyline)
         {
-            if ((word & 0xF000F000u) == 0x50005000u) { _polyline = false; ExecutePolyline(); _fifo.Clear(); }
-            else _fifo.Add(word);
+            if ((word & 0xF000F000u) == 0x50005000u) { _polyline = false; ExecutePolyline(); _fifo.Clear(); _fifoSrc.Clear(); }
+            else { _fifo.Add(word); _fifoSrc.Add(NextSrcAddr); }
             return;
         }
 
         _fifo.Add(word);
+        _fifoSrc.Add(NextSrcAddr);
         if (_fifo.Count == 1)
         {
             _need = CommandLength(word);
@@ -133,7 +138,7 @@ public sealed partial class Gpu
             if (_need == LenImageLoad) _need = 3;
         }
 
-        if (_fifo.Count >= _need) { Execute(); if (!_loadImage) _fifo.Clear(); }
+        if (_fifo.Count >= _need) { Execute(); if (!_loadImage) { _fifo.Clear(); _fifoSrc.Clear(); } }
     }
 
     public void WriteGp1(uint word)
@@ -147,9 +152,9 @@ public sealed partial class Gpu
                 GpuHle.NotifyDisplay(_dispVramX, _dispVramY, DisplayWidth, DisplayHeight);
                 return;
             case 0x00: Reset(); break;
-            case 0x01: _fifo.Clear(); _polyline = false; _loadImage = false; break;
+            case 0x01: _fifo.Clear(); _fifoSrc.Clear(); _polyline = false; _loadImage = false; break;
             case 0x02: break;
-            case 0x03: _displayDisabled = (p & 1) != 0; break;
+            case 0x03: _displayDisabled = (p & 1) != 0; Console.WriteLine($"[gp1] display-enable cmd p=0x{p:X} -> {(_displayDisabled ? "OFF" : "ON")}"); break;
             case 0x04: _dmaDir = (int)(p & 3); break;
             case 0x10: SetGpuInfo(p); break;
         }
@@ -176,6 +181,7 @@ public sealed partial class Gpu
     void Reset()
     {
         _fifo.Clear();
+        _fifoSrc.Clear();
         _polyline = _loadImage = _readImage = false;
         _displayDisabled = true;
         _dmaDir = 0;

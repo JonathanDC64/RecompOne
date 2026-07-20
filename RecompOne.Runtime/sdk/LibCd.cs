@@ -80,13 +80,20 @@ public static class LibCd
         c.V0 = (uint)(SyncResult(m, c.A2) == Complete ? 1 : 0);
     }
 
+    static long _dbgSync, _dbgReady, _dbgRSync;
     public static void CdSync(CpuContext c, IMemory m)
- => c.V0 = (uint)SyncResult(m, c.A1);
+    {
+        if (++_dbgSync % 300000 == 0) Console.WriteLine($"[dbg] CdSync x{_dbgSync} mode={c.A0} intr={_lastIntr}");
+        c.V0 = (uint)SyncResult(m, c.A1);
+    }
 
     public static void CdReady(CpuContext c, IMemory m)
     {
         if (c.A1 != 0) WriteResult(m, c.A1);
-        c.V0 = (uint)_lastIntr;
+        // During a ReadN, data is always immediately available (we read the disc
+        // image synchronously). Report DataReady so sector-by-sector poll loops
+        // that don't yield to VSync (and thus never see the Tick callback) proceed.
+        c.V0 = (uint)(_readActive ? DataReady : _lastIntr);
     }
 
     public static void CdRead(CpuContext c, IMemory m)
@@ -185,6 +192,7 @@ public static class LibCd
 
     public static void CdReadSync(CpuContext c, IMemory m)
     {
+        if (++_dbgRSync % 300000 == 0) Console.WriteLine($"[dbg] CdReadSync x{_dbgRSync} mode={c.A0}");
         if (c.A1 != 0) WriteResult(m, c.A1);
         c.V0 = 0;
     }
@@ -199,10 +207,26 @@ public static class LibCd
         int bytes = Math.Min(data.Length, words * 4);
         for (int j = 0; j < bytes; j++)
             m.WriteU8(madr + (uint)j, data[j]);
+        // Sequential ReadN retrieval: advance to the next sector so the next
+        // CdGetSector in the game's copy loop reads the following sector.
+        if (_readActive) AdvancePos(1);
         c.V0 = 1;
     }
 
     public static void CdDataSync(CpuContext c, IMemory m) => c.V0 = 0;
+
+    static long _dbgChk;
+    // Diagnostic passthrough for GAME's room checksum (sum(words)+0x12345678 == last word).
+    public static void ChecksumProbe(CpuContext c, IMemory m)
+    {
+        uint buf = c.A0; int count = (int)c.A1; int words = count << 9;
+        uint sum = 0x12345678;
+        for (int i = 0; i < words - 1; i++) sum += m.ReadU32(buf + (uint)(i * 4));
+        uint stored = m.ReadU32(buf + (uint)((words - 1) * 4));
+        if (_dbgChk++ < 12)
+            Console.WriteLine($"[chk] buf=0x{buf:X8} count={count} computed=0x{sum:X8} stored=0x{stored:X8} {(sum == stored ? "OK" : "FAIL")} w0=0x{m.ReadU32(buf):X8} w1=0x{m.ReadU32(buf + 4):X8} wLast-1=0x{m.ReadU32(buf + (uint)((words - 2) * 4)):X8}");
+        c.V0 = (uint)(sum != stored ? 1 : 0);
+    }
 
     public static void CdSearchFile(CpuContext c, IMemory m)
     {
@@ -211,11 +235,11 @@ public static class LibCd
 
         if (Runtime.Cd == null || !Runtime.Cd.Fs.Locate(name, out int lba, out uint size))
         {
-            Log.Sdk($"CdSearchFile '{name}'wasnt found");
+            Console.WriteLine($"[cd] CdSearchFile '{name}' NOT FOUND");
             c.V0 = 0;
             return;
         }
-        Log.Sdk($"CdSearchFile '{name}' lba={lba} size={size}");
+        Console.WriteLine($"[cd] CdSearchFile '{name}' lba={lba} size={size}");
 
         IntToPos(lba, out byte mm, out byte ss, out byte ff);
         m.WriteU8(fp + 0, mm);
@@ -302,6 +326,7 @@ public static class LibCd
             case ReadS:
                 _xaActive = true;
                 _readActive = false;
+                LibCdStream.SetXaFilter((_mode & 0x08) != 0, _filterFile, _filterChannel);
                 LibCdStream.OnReadStream(CurrentLba);
                 break;
             case GetlocL:

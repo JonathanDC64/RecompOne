@@ -1,5 +1,36 @@
 namespace RecompOne.Runtime;
 
+// Diagnostic per-frame primitive counters (poly = 3D world, rect = 2D HUD).
+public static class DbgPrim { public static int Poly, Line, Rect; }
+public static class DbgHit { public static int A, B, C, D, E, F, G; }
+
+// Diagnostic: enumerate distinct VRAM uploads and the texpage/clut used by large world polys.
+public static class DbgUp
+{
+    public static bool On = System.Environment.GetEnvironmentVariable("KF2_UPLOG") == "1";
+    static readonly System.Collections.Generic.HashSet<long> _up = new();
+    static readonly System.Collections.Generic.HashSet<long> _cpy = new();
+    static readonly System.Collections.Generic.HashSet<long> _poly = new();
+    public static void Load(int x, int y, int w, int h)
+    { if (!On) return; long k = ((long)x) | ((long)y << 12) | ((long)w << 24) | ((long)h << 40);
+      if (_up.Add(k)) System.Console.WriteLine($"[up] load x={x} y={y} w={w} h={h}"); }
+    public static void Copy(int dx, int dy, int w, int h)
+    { if (!On) return; long k = ((long)dx) | ((long)dy << 12) | ((long)w << 24) | ((long)h << 40);
+      if (_cpy.Add(k)) System.Console.WriteLine($"[cpy] dx={dx} dy={dy} w={w} h={h}"); }
+    public static void Poly(int tpx, int tpy, int depth, int clut, int twmx, int twmy, int twox, int twoy)
+    { if (!On) return; int cx = (clut & 0x3f) * 16, cy = (clut >> 6) & 0x1ff;
+      long k = ((long)tpx) | ((long)tpy << 12) | ((long)depth << 24) | ((long)cx << 32) | ((long)cy << 48);
+      if (_poly.Add(k)) System.Console.WriteLine($"[poly] tpx={tpx} tpy={tpy} depth={depth} clutX={cx} clutY={cy} twMask=({twmx},{twmy}) twOff=({twox},{twoy})"); }
+
+    // Track poly vertex bounds reaching DrawPolygon (any prim, textured or not). Log new extremes.
+    static int _minX = 9999, _minY = 9999, _maxX = -9999, _maxY = -9999;
+    public static void PolyBounds(int minx, int miny, int maxx, int maxy)
+    { if (!On) return; bool ch = false;
+      if (minx < _minX) { _minX = minx; ch = true; } if (miny < _minY) { _minY = miny; ch = true; }
+      if (maxx > _maxX) { _maxX = maxx; ch = true; } if (maxy > _maxY) { _maxY = maxy; ch = true; }
+      if (ch) System.Console.WriteLine($"[polybounds] X[{_minX}..{_maxX}] Y[{_minY}..{_maxY}]"); }
+}
+
 public sealed partial class Gpu
 {
     const int LenPolyline = -1;
@@ -44,9 +75,9 @@ public sealed partial class Gpu
         switch (op)
         {
             case 0x02: FillRect(); break;
-            case >= 0x20 and <= 0x3F: DrawPolygon(); break;
-            case >= 0x40 and <= 0x5F: DrawLine(); break;
-            case >= 0x60 and <= 0x7F: DrawRectangle(); break;
+            case >= 0x20 and <= 0x3F: DbgPrim.Poly++; DrawPolygon(); break;
+            case >= 0x40 and <= 0x5F: DbgPrim.Line++; DrawLine(); break;
+            case >= 0x60 and <= 0x7F: DbgPrim.Rect++; DrawRectangle(); break;
             case >= 0x80 and <= 0x9F: CopyVramToVram(); break;
             case >= 0xA0 and <= 0xBF: BeginImageLoad(); break;
             case >= 0xC0 and <= 0xDF: BeginImageRead(); break;
@@ -104,6 +135,7 @@ public sealed partial class Gpu
         int dx = (int)(_fifo[2] & 0x3FF), dy = (int)((_fifo[2] >> 16) & 0x1FF);
         int w = (int)(_fifo[3] & 0x3FF); if (w == 0) w = 0x400;
         int h = (int)((_fifo[3] >> 16) & 0x1FF); if (h == 0) h = 0x200;
+        DbgUp.Copy(dx, dy, w, h);
         if (HleOn) { HleCopy(sx, sy, dx, dy, w, h); return; }
         for (int row = 0; row < h; row++)
             for (int col = 0; col < w; col++)
@@ -125,8 +157,10 @@ public sealed partial class Gpu
         _loadH = (int)((_fifo[2] >> 16) & 0xFFFF); if (_loadH == 0) _loadH = 0x200; else _loadH &= 0x1FF; if (_loadH == 0) _loadH = 0x200;
         _loadPx = 0;
         _loadImage = true;
+        DbgUp.Load(_loadX, _loadY, _loadW, _loadH);
         HleLoadBegin();
         _fifo.Clear();
+        _fifoSrc.Clear();
     }
 
     void StoreImageHalfword(ushort value)

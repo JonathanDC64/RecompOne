@@ -21,4 +21,7 @@ public interface IGpuBackend
     // these touch gl
     void Flush();
     void Present(in HleDispEnv disp);
+
+    // debug: dump entire 1024x512 VRAM to a PNG (decoded RGB)
+    void DumpVram(string path);
 }
