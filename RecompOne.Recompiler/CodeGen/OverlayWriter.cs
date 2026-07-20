@@ -13,7 +13,7 @@ namespace RecompOne.Recompiler.CodeGen;
 
 public static class OverlayWriter
 {
-    record OverlayResult(string Name, List<MipsFunction> Functions, int LbaStart, uint Base, uint Size, MipsInstruction[] Instructions, uint Sig0, uint Sig1);
+    record OverlayResult(string Name, List<MipsFunction> Functions, int LbaStart, uint Base, uint Size, MipsInstruction[] Instructions);
 
     public static void Write(RecompOneConfig config, CueFs fs, string outDir)
     {
@@ -104,7 +104,7 @@ public static class OverlayWriter
             if (elfInfo != null) AnalyzeJumpTables(funcs, elfInfo, "main");
 
             ApplyStubsAndIgnored(funcs, config.Stubs, config.Ignored);
-            overlayResults.Add(new OverlayResult("main", funcs, -1, 0, 0, mainInstrs, 0, 0));
+            overlayResults.Add(new OverlayResult("main", funcs, -1, 0, 0, mainInstrs));
         }
 
         foreach (var overlayConfig in config.Overlays)
@@ -195,9 +195,7 @@ public static class OverlayWriter
             ApplyStubsAndIgnored(funcs, overlayConfig.Stubs.Concat(config.Stubs), overlayConfig.Ignored.Concat(config.Ignored));
             
             uint ovlBase = overlayConfig.Base != null ? Convert.ToUInt32(overlayConfig.Base, 16) + (uint)overlayConfig.Rebase : 0;
-            uint sig0 = discBin.Length >= 4 ? BitConverter.ToUInt32(discBin, 0) : 0u;
-            uint sig1 = discBin.Length >= 8 ? BitConverter.ToUInt32(discBin, 4) : 0u;
-            overlayResults.Add(new OverlayResult(overlayConfig.Name, funcs, overlayLba, ovlBase, (uint)discBin.Length, instrs, sig0, sig1));
+            overlayResults.Add(new OverlayResult(overlayConfig.Name, funcs, overlayLba, ovlBase, (uint)discBin.Length, instrs));
         }
 
         var allFuncs = overlayResults.SelectMany(o => o.Functions).ToList();
@@ -224,7 +222,7 @@ public static class OverlayWriter
         foreach (var result in overlayResults)
         {
             Console.WriteLine($"[Recompiler] emiting {result.Name}.cs ({result.Functions.Count} functions)");
-            EmitOverlayFile(result.Name, result.Functions, className, knownFuncs, config.Debug, result.LbaStart,  result.Base, result.Size, result.Instructions, outDir, result.Sig0, result.Sig1);
+            EmitOverlayFile(result.Name, result.Functions, className, knownFuncs, config.Debug, result.LbaStart,  result.Base, result.Size, result.Instructions, outDir);
         }
 
         Console.WriteLine("[Recompiler] Emitting Entry.cs");
@@ -262,7 +260,7 @@ public static class OverlayWriter
         Console.WriteLine($"[Recompiler] linear sweep found {swept.Count} function(s) (+{callees.Count} callees) in {overlayName}");
     }
 
-    static void EmitOverlayFile(string overlayName, List<MipsFunction> funcs, string className, Dictionary<uint, string> knownFuncs, bool debug, int lbaStart, uint ovlBase, uint ovlSize, MipsInstruction[] instrs, string outDir, uint sig0, uint sig1)
+    static void EmitOverlayFile(string overlayName, List<MipsFunction> funcs, string className, Dictionary<uint, string> knownFuncs, bool debug, int lbaStart, uint ovlBase, uint ovlSize, MipsInstruction[] instrs, string outDir)
     {
         var sb = new StringBuilder();
         sb.AppendLine("using RecompOne.Runtime.Context;");
@@ -299,8 +297,6 @@ public static class OverlayWriter
         sb.AppendLine($"    public int LbaStart => {lbaStart};");
         sb.AppendLine($"    public uint Base => 0x{ovlBase:X8}u;");
         sb.AppendLine($"    public uint Size => 0x{ovlSize:X}u;");
-        sb.AppendLine($"    public uint Sig0 => 0x{sig0:X8}u;");
-        sb.AppendLine($"    public uint Sig1 => 0x{sig1:X8}u;");
         sb.AppendLine("    public IReadOnlyDictionary<uint, Action<CpuContext, IMemory>> Functions { get; } =");
         sb.AppendLine("        new Dictionary<uint, Action<CpuContext, IMemory>>");
         sb.AppendLine("        {");

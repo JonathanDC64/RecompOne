@@ -91,15 +91,8 @@ public static class FunctionEmitter
         return sb.ToString();
     }
 
-    // A function whose declared range ends without a return/tail-jump runs straight
-    // into the next symbol. This INCLUDES a terminal jal/jalr: a call returns to
-    // pc+8 and continues, so when the range ends right after the call the execution
-    // continues into the physically-next function. KF2 relies on this — e.g. a
-    // dispatch block ends in `jalr` (call a virtual handler) then falls through into
-    // the shared frame-restoring epilogue; dropping that fall-through skips the
-    // epilogue and leaks the caller's frame (SP + callee-saved regs). Only a real
-    // control transfer that does NOT return (return/j/jr/unconditional branch) ends
-    // a function.
+    //some hand-written asm (crt0 stubs, etc) has no jr/j/branch at its declared end at all and just
+    // runs straight into the next symbol if a jal at the end is a call, not a fall-through, so its left alone
     static bool FallsThrough(MipsInstruction[] instrs)
     {
         if (instrs.Length == 0) return false;
@@ -108,10 +101,8 @@ public static class FunctionEmitter
         if (instrs.Length >= 2 && instrs[idx - 1].HasDelaySlot) idx--;
 
         var ctrl = instrs[idx];
-        if (ctrl.IsReturn || ctrl.IsJump || ctrl.IsUnconditionalBranch) return false;
-        // jr = tail-jump/return (no fall-through); jalr = a CALL (links $ra), which
-        // returns to pc+8 and continues into the next symbol.
-        if (ctrl.IsRegisterJump && !ctrl.IsFunctionCall) return false;
+        if (ctrl.IsReturn || ctrl.IsJump || ctrl.IsRegisterJump || ctrl.IsUnconditionalBranch) return false;
+        if (ctrl.IsFunctionCall) return false;
         return true;
     }
 }

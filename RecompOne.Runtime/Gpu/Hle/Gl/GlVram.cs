@@ -4,7 +4,7 @@ namespace RecompOne.Runtime.Hle;
 
 public sealed class GlVram
 {
-    public static int Scale { get; set; } = System.Environment.GetEnvironmentVariable("KF2_SCALE1") == "1" ? 1 : 4;
+    public static int Scale { get; set; } = 4;
     public static int Width => VramShadow.Width * Scale;
     public static int Height => VramShadow.Height * Scale;
 

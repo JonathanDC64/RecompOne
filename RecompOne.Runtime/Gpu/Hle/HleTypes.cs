@@ -2,9 +2,8 @@ namespace RecompOne.Runtime.Hle;
 
 public struct HleVertex
 {
-    public float X, Y;
-    public float Z;
-    public float W;   // PGXP: view depth for perspective-correct interpolation (0/1 = affine)
+    public float X, Y; 
+    public float Z; 
     public byte R, G, B;
     public short U, V;
     public bool HasGteZ;

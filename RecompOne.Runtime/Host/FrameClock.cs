@@ -15,10 +15,6 @@ internal static class FrameClock
         _nextFrameMs += FrameMs;
         double now = _clock.Elapsed.TotalMilliseconds;
         double wait = _nextFrameMs - now;
-        // Never schedule more than one frame ahead: callers that present more
-        // than 60x/s (e.g. delta-time pacing + the game's own per-frame VSync)
-        // would otherwise push the grid forward and stall in bursts.
-        if (wait > FrameMs) { _nextFrameMs = now + FrameMs; wait = FrameMs; }
         if (wait > 1) Thread.Sleep((int)wait);
         else if (wait < -100) _nextFrameMs = now;
     }

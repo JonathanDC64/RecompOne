@@ -63,18 +63,12 @@ internal static class GlShaders
         layout(location = 2) in int   inClut;
         layout(location = 3) in int   inTexpage;
         layout(location = 4) in vec2  inUV;
-        layout(location = 5) in float inW;
-        layout(location = 6) in int   inUvLimits; // packed UV bbox: uMin|vMin<<8|uMax<<16|vMax<<24
 
         out vec4 vColor;
         out vec2 vUV;
-        noperspective out vec4 vColorA; // affine twins: fragment picks by uniform
-        noperspective out vec2 vUVA;
         flat out ivec2 clutBase;
         flat out ivec2 pageBase;
         flat out int   texMode;
-        flat out int   vPersp; // 1 = perspective 3D poly (W!=1); 0 = 2D rect/sprite/affine
-        flat out ivec4 uvLimits; // primitive UV bbox (uMin,vMin,uMax,vMax) for bilinear tap clamp
 
         uniform vec2 uVertexOffset;
         uniform vec2 uPosBias;
@@ -82,22 +76,15 @@ internal static class GlShaders
 
         void main() {
             vec2 p = (inPos + uVertexOffset + uPosBias) * uFbInv - 1.0;
-            // PGXP: scaling clip coords by W makes the hardware interpolate the
-            // smooth varyings perspective-correctly; W=1 = PS1-style affine. The
-            // noperspective twins always interpolate affine regardless of W.
-            gl_Position = vec4(p * inW, 0.0, inW);
-            vPersp = (inW != 1.0) ? 1 : 0; // rects/sprites are affine (W=1) -> excluded from bilinear
-            uvLimits = ivec4(inUvLimits & 0xff, (inUvLimits >> 8) & 0xff, (inUvLimits >> 16) & 0xff, (inUvLimits >> 24) & 0xff);
+            gl_Position = vec4(p, 0.0, 1.0);
 
             vColor = vec4(float(inColor & 0xFFu), float((inColor >> 8) & 0xFFu), float((inColor >> 16) & 0xFFu), 0.0) / 255.0;
-            vColorA = vColor;
 
             if ((inTexpage & 0x8000) != 0) {
                 texMode = 4;
             } else {
                 texMode = (inTexpage >> 7) & 3;
                 vUV = inUV;
-                vUVA = inUV;
                 pageBase = ivec2((inTexpage & 0xf) * 64, ((inTexpage >> 4) & 1) * 256);
                 clutBase = ivec2((inClut & 0x3f) * 16, (inClut >> 6) & 0x1ff);
             }
@@ -108,16 +95,9 @@ internal static class GlShaders
         #version 330 core
         in vec4 vColor;
         in vec2 vUV;
-        noperspective in vec4 vColorA;
-        noperspective in vec2 vUVA;
         flat in ivec2 clutBase;
         flat in ivec2 pageBase;
         flat in int   texMode;
-        flat in int   vPersp;
-        flat in ivec4 uvLimits;
-
-        uniform int uPctTex; // 1 = perspective-correct texture coords (PGXP)
-        uniform int uPctCol; // 1 = perspective-correct vertex colors
 
         layout(location = 0, index = 0) out vec4 FragColor;
         layout(location = 0, index = 1) out vec4 BlendColor;
@@ -130,8 +110,6 @@ internal static class GlShaders
         uniform float uSetMask;
         uniform int   uCheckMask;
         uniform int   uScale;
-        uniform int   uFilter;       // 3D world polygons: 0 = nearest, 1 = bilinear
-        uniform int   uFilterSprite; // 2D rects/sprites/UI: 0 = nearest, 1 = bilinear
 
         int u5(float f) { return int(floor(f * 31.0 + 0.5)); }
         vec4 fetch(ivec2 c) { return texelFetch(uVram, (c & ivec2(1023, 511)) * uScale, 0); }
@@ -141,78 +119,35 @@ internal static class GlShaders
         }
         vec4 modulate(vec4 tex, vec4 col) { vec4 r = (tex * col) / (128.0 / 255.0); r.a = 1.0; return r; }
 
-        // Decode ONE texel at integer coords (texture-window wrap + CLUT lookup).
-        vec4 sampleTexel(ivec2 raw) {
-            ivec2 uv = ((raw & uTexWindow.xy) | uTexWindow.zw) & ivec2(0xff);
-            if (texMode == 0) {
-                int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
-                int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
-                return fetch(ivec2(clutBase.x + idx, clutBase.y));
-            } else if (texMode == 1) {
-                int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
-                int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
-                return fetch(ivec2(clutBase.x + idx, clutBase.y));
-            }
-            return fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
-        }
-        // PS1 transparency: a texel whose 16-bit value is all-zero is "not drawn".
-        bool isOpaque(vec4 t) { return !(t.rgb == vec3(0.0) && t.a < 0.5); }
-
         void main() {
             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
 
-            vec4 col = uPctCol != 0 ? vColor : vColorA;
-            vec2 uvi = uPctTex != 0 ? vUV : vUVA;
-
             if (texMode == 4) {
-                FragColor = vec4(col.rgb, uSetMask);
+                FragColor = vec4(vColor.rgb, uSetMask);
                 BlendColor = uBlend;
                 return;
             }
 
+            int rawU = dFdx(vUV.x) < 0.0 ? int(ceil(vUV.x - 0.0001)) : int(floor(vUV.x + 0.0001));
+            int rawV = dFdy(vUV.y) < 0.0 ? int(ceil(vUV.y - 0.0001)) : int(floor(vUV.y + 0.0001));
+            ivec2 uv = (ivec2(rawU, rawV) & uTexWindow.xy) | uTexWindow.zw;
+            uv &= ivec2(0xff);
             vec4 texel;
-            int flt = (vPersp == 1) ? uFilter : uFilterSprite; // polys vs sprites/UI
-            if (flt == 0) {
-                // Nearest: subpixel-correct texel pick (matches PS1 rasterizer).
-                int rawU = dFdx(uvi.x) < 0.0 ? int(ceil(uvi.x - 0.0001)) : int(floor(uvi.x + 0.0001));
-                int rawV = dFdy(uvi.y) < 0.0 ? int(ceil(uvi.y - 0.0001)) : int(floor(uvi.y + 0.0001));
-                texel = sampleTexel(ivec2(rawU, rawV));
-                if (!isOpaque(texel)) discard;
+
+            if (texMode == 0) {
+                int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
+                int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
+                texel = fetch(ivec2(clutBase.x + idx, clutBase.y));
+            } else if (texMode == 1) {
+                int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
+                int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
+                texel = fetch(ivec2(clutBase.x + idx, clutBase.y));
             } else {
-                // Manual CLUT-aware bilinear (matches DuckStation). Centered on the
-                // SAME texel the nearest path picks (dFdx-aware: ceil on surfaces
-                // where U/V decrease across the screen), so toggling filter on/off
-                // does NOT shift the texture. Blends only TOWARD the sub-texel
-                // neighbour (weight <= 0.5). Transparent texels weighted out.
-                bool decX = dFdx(uvi.x) < 0.0, decY = dFdy(uvi.y) < 0.0;
-                ivec2 base = ivec2(decX ? ceil(uvi.x - 0.0001) : floor(uvi.x + 0.0001),
-                                   decY ? ceil(uvi.y - 0.0001) : floor(uvi.y + 0.0001));
-                vec2 ttl = (uvi - vec2(base)) + vec2(decX ? 0.5 : -0.5, decY ? 0.5 : -0.5);
-                ivec2 off = ivec2(sign(ttl.x), sign(ttl.y));
-                vec2 w = abs(ttl);                    // neighbour weight, 0..0.5
-                // Clamp every tap to the primitive's UV bounding box (uv_limits) so
-                // bilinear can't read into an adjacent atlas texture or across a
-                // tile edge -> no bleed (sprite-top garbage) and no floor seams.
-                ivec2 lo = uvLimits.xy, hi = uvLimits.zw;
-                vec4 t00 = sampleTexel(clamp(base, lo, hi));
-                vec4 t10 = sampleTexel(clamp(base + ivec2(off.x, 0), lo, hi));
-                vec4 t01 = sampleTexel(clamp(base + ivec2(0, off.y), lo, hi));
-                vec4 t11 = sampleTexel(clamp(base + ivec2(off.x, off.y), lo, hi));
-                float w00 = (1.0 - w.x) * (1.0 - w.y) * (isOpaque(t00) ? 1.0 : 0.0);
-                float w10 = w.x * (1.0 - w.y) * (isOpaque(t10) ? 1.0 : 0.0);
-                float w01 = (1.0 - w.x) * w.y * (isOpaque(t01) ? 1.0 : 0.0);
-                float w11 = w.x * w.y * (isOpaque(t11) ? 1.0 : 0.0);
-                float ws = w00 + w10 + w01 + w11; // = DuckStation's ialpha (opaque coverage)
-                // BinAlpha (DuckStation, since PS1 is 1-bit alpha with no blending):
-                // keep the pixel only where opaque coverage >= 50%, so a filtered
-                // opaque edge stays on the same line as nearest -> sprites/UI do NOT
-                // grow ("get fatter"); < 50% is treated as transparent -> discard.
-                if (ws < 0.5) discard;
-                vec3 rgb = (t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / ws;
-                float a = (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ws;
-                texel = vec4(rgb, a);
+                texel = fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
             }
-            FragColor = vec4(modulate(texel, col).rgb, max(texel.a, uSetMask));
+
+            if (texel.rgb == vec3(0.0) && texel.a < 0.5) discard;
+            FragColor = vec4(modulate(texel, vColor).rgb, max(texel.a, uSetMask));
             BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
         }
         """;
