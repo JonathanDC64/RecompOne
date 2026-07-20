@@ -70,6 +70,28 @@ internal sealed class DisplaySettingsSection : ISettingsSection
                 + "controlled separately from world polygons. Off = crisp nearest\n"
                 + "(recommended for pixel UI/text).");
 
+        // Anisotropic filtering — independent of the base filter above. Reduces
+        // the grainy shimmer on distant / oblique world textures (floors, walls)
+        // that neither nearest nor bilinear fixes (it's minification aliasing).
+        int[] anisoLevels = { 1, 2, 4, 8, 16 };
+        string[] anisoNames = { "Off", "2x", "4x", "8x", "16x" };
+        int anisoCur = ConfigManager.View.AnisoLevel;
+        int anisoIdx = Math.Max(0, Array.IndexOf(anisoLevels, anisoCur));
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.Combo("Anisotropic filtering (experimental)", ref anisoIdx, anisoNames, anisoNames.Length))
+        {
+            ConfigManager.View.AnisoLevel = anisoLevels[anisoIdx];
+            Hle.GpuHle.AnisoLevel = anisoLevels[anisoIdx];
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "Multi-samples distant/oblique world textures along the receding\n"
+                + "axis to remove the grainy shimmer (minification aliasing). Uses\n"
+                + "the base filter above per sample, so it combines with either\n"
+                + "Nearest or Bilinear. Higher = smoother but more GPU cost.\n"
+                + "Applies to world polygons only (not 2D sprites/UI).");
+
         bool pgxp = ConfigManager.View.PgxpGeometryCorrection;
         if (ImGui.Checkbox("PGXP Geometry Correction (experimental)", ref pgxp))
         {

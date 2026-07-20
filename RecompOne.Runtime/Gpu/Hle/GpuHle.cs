@@ -14,6 +14,8 @@ public static class GpuHle
     // TextureFilter = 3D world polygons; SpriteTextureFilter = 2D rects/sprites/UI.
     public static bool TextureFilter { get; set; }
     public static bool SpriteTextureFilter { get; set; }
+    // Anisotropic filtering for world polygons: 1 = off, else 2/4/8/16 taps.
+    public static int AnisoLevel { get; set; } = 1;
     public static float TargetAspect { get; set; } = 4f / 3f;
     public const float BaseAspect = 4f / 3f;
 

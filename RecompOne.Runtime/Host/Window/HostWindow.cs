@@ -202,6 +202,7 @@ internal static class HostWindow
         Pgxp.CullingCorrection = ConfigManager.View.PgxpCullingCorrection;
         Hle.GpuHle.TextureFilter = ConfigManager.View.TextureFilter;
         Hle.GpuHle.SpriteTextureFilter = ConfigManager.View.SpriteTextureFilter;
+        Hle.GpuHle.AnisoLevel = ConfigManager.View.AnisoLevel;
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 

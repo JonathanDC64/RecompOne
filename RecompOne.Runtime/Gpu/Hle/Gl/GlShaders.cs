@@ -132,6 +132,7 @@ internal static class GlShaders
         uniform int   uScale;
         uniform int   uFilter;       // 3D world polygons: 0 = nearest, 1 = bilinear
         uniform int   uFilterSprite; // 2D rects/sprites/UI: 0 = nearest, 1 = bilinear
+        uniform int   uAniso;        // anisotropic taps for world polys: 1 = off, else 2/4/8/16
 
         int u5(float f) { return int(floor(f * 31.0 + 0.5)); }
         vec4 fetch(ivec2 c) { return texelFetch(uVram, (c & ivec2(1023, 511)) * uScale, 0); }
@@ -158,6 +159,40 @@ internal static class GlShaders
         // PS1 transparency: a texel whose 16-bit value is all-zero is "not drawn".
         bool isOpaque(vec4 t) { return !(t.rgb == vec3(0.0) && t.a < 0.5); }
 
+        // One base-filtered sample at uv (0=nearest, 1=bilinear), using the
+        // precomputed screen-gradient signs (dFdx must be taken at uniform control
+        // flow, in main). ow = opaque coverage 0..1. Taps clamp to the primitive's
+        // UV bbox so anisotropic taps can't bleed into an adjacent atlas texture.
+        // Used only by the anisotropic path; the non-AF path keeps its exact
+        // original inline sampling below.
+        vec4 sampleBase(vec2 uv, int flt, bool decX, bool decY, out float ow) {
+            ivec2 lo = uvLimits.xy, hi = uvLimits.zw;
+            if (flt == 0) {
+                int rawU = decX ? int(ceil(uv.x - 0.0001)) : int(floor(uv.x + 0.0001));
+                int rawV = decY ? int(ceil(uv.y - 0.0001)) : int(floor(uv.y + 0.0001));
+                vec4 t = sampleTexel(clamp(ivec2(rawU, rawV), lo, hi));
+                ow = isOpaque(t) ? 1.0 : 0.0;
+                return t;
+            }
+            ivec2 base = ivec2(decX ? ceil(uv.x - 0.0001) : floor(uv.x + 0.0001),
+                               decY ? ceil(uv.y - 0.0001) : floor(uv.y + 0.0001));
+            vec2 ttl = (uv - vec2(base)) + vec2(decX ? 0.5 : -0.5, decY ? 0.5 : -0.5);
+            ivec2 off = ivec2(sign(ttl.x), sign(ttl.y));
+            vec2 w = abs(ttl);
+            vec4 t00 = sampleTexel(clamp(base, lo, hi));
+            vec4 t10 = sampleTexel(clamp(base + ivec2(off.x, 0), lo, hi));
+            vec4 t01 = sampleTexel(clamp(base + ivec2(0, off.y), lo, hi));
+            vec4 t11 = sampleTexel(clamp(base + ivec2(off.x, off.y), lo, hi));
+            float w00 = (1.0 - w.x) * (1.0 - w.y) * (isOpaque(t00) ? 1.0 : 0.0);
+            float w10 = w.x * (1.0 - w.y) * (isOpaque(t10) ? 1.0 : 0.0);
+            float w01 = (1.0 - w.x) * w.y * (isOpaque(t01) ? 1.0 : 0.0);
+            float w11 = w.x * w.y * (isOpaque(t11) ? 1.0 : 0.0);
+            ow = w00 + w10 + w01 + w11;
+            if (ow < 1e-4) return vec4(0.0);
+            return vec4((t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / ow,
+                        (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ow);
+        }
+
         void main() {
             if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
 
@@ -172,6 +207,34 @@ internal static class GlShaders
 
             vec4 texel;
             int flt = (vPersp == 1) ? uFilter : uFilterSprite; // polys vs sprites/UI
+            int aniso = (vPersp == 1) ? uAniso : 1;             // AF on world polys only
+            if (aniso > 1) {
+                // Anisotropic filtering: minified/oblique world textures (distant
+                // floors, walls) alias because one screen pixel covers many texels
+                // along the receding axis. Take several base-filtered samples
+                // spread along that axis (the longer of the two UV screen-gradients)
+                // and average the decoded colours. Derivatives are read here at
+                // uniform control flow (the branch is per-primitive constant).
+                vec2 dx = dFdx(uvi), dy = dFdy(uvi);
+                float lx = length(dx), ly = length(dy);
+                vec2 major = (lx > ly) ? dx : dy;
+                float ratio = max(lx, ly) / max(min(lx, ly), 1e-3);
+                int taps = clamp(int(ratio + 0.5), 1, aniso); // adapt to actual anisotropy
+                bool dcx = dFdx(uvi.x) < 0.0, dcy = dFdy(uvi.y) < 0.0;
+                vec3 acc = vec3(0.0); float aacc = 0.0, wsum = 0.0;
+                for (int i = 0; i < 16; i++) {
+                    if (i >= taps) break;
+                    float t = (float(i) + 0.5) / float(taps) - 0.5; // -0.5..+0.5 across footprint
+                    float ow;
+                    vec4 s = sampleBase(uvi + major * t, flt, dcx, dcy, ow);
+                    acc += s.rgb * ow; aacc += s.a * ow; wsum += ow;
+                }
+                if (wsum < 0.5 * float(taps)) discard; // mostly-transparent footprint = edge
+                texel = vec4(acc / max(wsum, 1e-4), aacc / max(wsum, 1e-4));
+                FragColor = vec4(modulate(texel, col).rgb, max(texel.a, uSetMask));
+                BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
+                return;
+            }
             if (flt == 0) {
                 // Nearest: subpixel-correct texel pick (matches PS1 rasterizer).
                 int rawU = dFdx(uvi.x) < 0.0 ? int(ceil(uvi.x - 0.0001)) : int(floor(uvi.x + 0.0001));

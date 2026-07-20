@@ -98,4 +98,11 @@ public class ViewConfig
         set => SetInt("InternalScale", value);
     }
 
+    // Anisotropic filtering for world textures: 1 = off, else 2/4/8/16 taps.
+    public int AnisoLevel
+    {
+        get => GetInt("AnisoLevel", 1);
+        set => SetInt("AnisoLevel", value);
+    }
+
 }

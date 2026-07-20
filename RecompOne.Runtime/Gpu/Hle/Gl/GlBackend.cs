@@ -31,7 +31,7 @@ public sealed class GlBackend : IGpuBackend
     int _kBlend, _kSetMask, _kCheckMask;
     int _kTwAndX, _kTwAndY, _kTwOrX, _kTwOrY;
     int _kClipX0, _kClipY0, _kClipX1, _kClipY1;
-    int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv, _uPctTex, _uPctCol, _uFilter, _uFilterSprite;
+    int _uTexWindow, _uBlend, _uBlendOpaque, _uSetMask, _uCheckMask, _uPosBias, _uFbInv, _uPctTex, _uPctCol, _uFilter, _uFilterSprite, _uAniso;
     int _uPresentOrigin, _uPresentSize, _uPresentTexSize, _uPresent24Origin, _uPresent24Size;
 
     public bool Ready { get; private set; }
@@ -58,6 +58,7 @@ public sealed class GlBackend : IGpuBackend
         _uPctCol = _gl.GetUniformLocation(_progPrim, "uPctCol");
         _uFilter = _gl.GetUniformLocation(_progPrim, "uFilter");
         _uFilterSprite = _gl.GetUniformLocation(_progPrim, "uFilterSprite");
+        _uAniso = _gl.GetUniformLocation(_progPrim, "uAniso");
 
         _gl.UseProgram(_progPrim);
         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uVram"), 0);
@@ -450,6 +451,7 @@ public sealed class GlBackend : IGpuBackend
         _gl.Uniform1(_uPctCol, RecompOne.Runtime.Pgxp.PerspectiveColors ? 1 : 0);
         _gl.Uniform1(_uFilter, GpuHle.TextureFilter ? 1 : 0);
         _gl.Uniform1(_uFilterSprite, GpuHle.SpriteTextureFilter ? 1 : 0);
+        _gl.Uniform1(_uAniso, GpuHle.AnisoLevel);
         _gl.Uniform1(_uSetMask, _kSetMask == 1 ? 1f : 0f);
         _gl.Uniform1(_uCheckMask, _kCheckMask);
         _gl.Uniform4(_uBlendOpaque, 1f, 1f, 1f, 0f);
