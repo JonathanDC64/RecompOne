@@ -16,6 +16,10 @@ public static class GpuHle
     public static bool SpriteTextureFilter { get; set; }
     // Anisotropic filtering for world polygons: 1 = off, else 2/4/8/16 taps.
     public static int AnisoLevel { get; set; } = 1;
+
+    // Change the internal-resolution scale live (no restart). Must be called on
+    // the GL thread — the settings UI is, since it draws during the render pass.
+    public static void SetInternalScale(int scale) => Backend?.SetInternalScale(scale);
     public static float TargetAspect { get; set; } = 4f / 3f;
     public const float BaseAspect = 4f / 3f;
 

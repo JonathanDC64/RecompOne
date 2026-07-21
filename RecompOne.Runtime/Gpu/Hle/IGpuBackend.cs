@@ -22,6 +22,9 @@ public interface IGpuBackend
     void Flush();
     void Present(in HleDispEnv disp);
 
+    // change the internal-resolution scale live (call on the GL thread)
+    void SetInternalScale(int scale);
+
     // debug: dump entire 1024x512 VRAM to a PNG (decoded RGB)
     void DumpVram(string path);
 }

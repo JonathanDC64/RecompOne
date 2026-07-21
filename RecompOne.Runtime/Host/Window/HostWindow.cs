@@ -337,7 +337,7 @@ internal static class HostWindow
         _vramTex= CreateTexture(_gl);
         _ramTex = CreateTexture(_gl);
 
-        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : Math.Clamp(ConfigManager.View.InternalScale, 1, 8);
+        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : Math.Clamp(ConfigManager.View.InternalScale, 1, 9);
         Console.WriteLine($"[scale] internal={Hle.GlVram.Scale}x (config={ConfigManager.View.InternalScale}, native={ConfigManager.View.NativeResolution})");
         _glBackend = new Hle.GlBackend(_gl);
         _glBackend.InitGl();

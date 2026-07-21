@@ -185,6 +185,24 @@ public sealed class GlBackend : IGpuBackend
         return fresh;
     }
 
+    // Live internal-resolution change. Preserve any dirty map framebuffers back to
+    // VRAM, drop the render targets so they rebuild at the new scale (present falls
+    // back to the resized VRAM texture meanwhile), resize VRAM, and re-push uScale.
+    // The present texture re-sizes itself on the next Present (EnsurePresentSize).
+    public void SetInternalScale(int scale)
+    {
+        if (!Ready || scale < 1 || scale == GlVram.Scale) return;
+        foreach (var rt in _rts) if (rt is { Dirty: true }) Writeback(rt);
+        for (int i = 0; i < _rts.Length; i++) { _rts[i]?.Destroy(_gl); _rts[i] = null; }
+
+        _vram.Resize(scale);
+
+        _gl.UseProgram(_progPrim);
+        _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uScale"), scale);
+        _gl.UseProgram(_progPresent24);
+        _gl.Uniform1(_gl.GetUniformLocation(_progPresent24, "uScale"), scale);
+    }
+
     void Writeback(GlDisplayRt rt)
     {
         int s = GlVram.Scale;

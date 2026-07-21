@@ -124,6 +124,29 @@ public sealed class GlVram
         _scratchTex = CreateTex(Width, Height);
     }
 
+    // Change the internal resolution scale live. The scaled texture is the
+    // authoritative VRAM, so snapshot it down to native res, recreate at the new
+    // scale, and blit it back (textures + the current framebuffer survive,
+    // upscaled; the game re-renders at full detail next frame). The native
+    // staging texture/FBO are scale-independent and reused.
+    public void Resize(int newScale)
+    {
+        if (newScale < 1 || newScale == Scale) return;
+
+        var snapshot = new ushort[VramShadow.Width * VramShadow.Height];
+        ReadRect(0, 0, VramShadow.Width, VramShadow.Height, snapshot);
+
+        Scale = newScale;
+        if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+        if (_tex != 0) _gl.DeleteTexture(_tex);
+        if (_scratchTex != 0) { _gl.DeleteTexture(_scratchTex); _scratchTex = 0; }
+        _tex = CreateTex(Width, Height);
+        _fbo = CreateFbo(_tex);
+
+        WriteRect(0, 0, VramShadow.Width, VramShadow.Height, snapshot);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+    }
+
     public void Dispose()
     {
         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
