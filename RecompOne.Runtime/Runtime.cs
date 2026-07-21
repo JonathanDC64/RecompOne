@@ -74,12 +74,13 @@ public static class Runtime
         // present, so at 120/144fps the music sequencer and vblank-paced menus ran
         // fast. Gate both to 60Hz (hardware rate); the world stays fast because
         // it's paced by wall-clock delta-time, not the vblank.
-        bool vbl = VblankBeat();
-        if (vbl) DispatchIrq(0);
+        int vbl = VblankBeats();
+        for (int i = 0; i < vbl; i++) DispatchIrq(0);
         PumpCdIsr();
         PumpCdDataReadyFallback();
-        if (Mem != null && Cpu != null && vbl)
-            Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
+        if (Mem != null && Cpu != null)
+            for (int i = 0; i < vbl; i++)
+                Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
         VsyncCounterProbe();
     }
 
@@ -204,19 +205,24 @@ public static class Runtime
     static readonly System.Diagnostics.Stopwatch _vblankClock = System.Diagnostics.Stopwatch.StartNew();
     static double _nextVblankSec, _vblankLogWindow;
     static int _vblankFires;
-    public static bool VblankBeat()
+    // Number of real-time 60Hz vblank ticks elapsed since the last call — a
+    // CATCH-UP count, not a single beat. Presents can be faster than 60Hz (144:
+    // returns 0 most calls, 1 occasionally) OR slower (30fps: ~2 per call, 15fps:
+    // ~4), and firing the vblank this many times averages a true 60Hz sound tick
+    // at any framerate. Capped so a hitch can't fire a burst.
+    public static int VblankBeats()
     {
         double now = _vblankClock.Elapsed.TotalSeconds;
-        if (now < _nextVblankSec) return false;
-        _nextVblankSec += 1.0 / 60.0;
+        int n = 0;
+        while (now >= _nextVblankSec && n < 4) { _nextVblankSec += 1.0 / 60.0; n++; }
         if (now - _nextVblankSec > 0.25) _nextVblankSec = now + 1.0 / 60.0; // resync after a hitch
         if (System.Environment.GetEnvironmentVariable("KF2_VBLANK_LOG") == "1")
         {
-            _vblankFires++;
+            _vblankFires += n;
             if (now - _vblankLogWindow >= 1.0)
             { System.Console.WriteLine($"[vblank] {_vblankFires / (now - _vblankLogWindow):F0}/s"); _vblankFires = 0; _vblankLogWindow = now; }
         }
-        return true;
+        return n;
     }
 
     // Call once per present (~the game's normal frame cadence) from a busy-poll.
@@ -248,7 +254,8 @@ public static class Runtime
             // overlay is active (else it reads another overlay's memory and
             // dispatches garbage). Snapshot/restore so it doesn't clobber the
             // poll's registers.
-            if (VblankBeat())
+            int beats = VblankBeats();
+            for (int i = 0; i < beats; i++)
             {
                 Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
                 if (AuxAudioTick != null
