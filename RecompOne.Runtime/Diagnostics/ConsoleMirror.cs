@@ -12,6 +12,11 @@ public static class ConsoleMirror
     static int _version;
     static bool _installed;
 
+    // When set, the Tee stops writing to the real console (no synchronous console
+    // I/O) but keeps capturing to the ring buffer, so crash logs still get recent
+    // output. Toggled via Log.Muted.
+    public static bool Muted { get; set; }
+
     public static int Version { get { lock (_gate) return _version; } }
 
     public static void Install()
@@ -83,19 +88,19 @@ public static class ConsoleMirror
 
         public override void Write(char value)
         {
-            _inner.Write(value);
+            if (!Muted) _inner.Write(value);
             AppendChar(value);
         }
 
         public override void Write(string? value)
         {
-            _inner.Write(value);
+            if (!Muted) _inner.Write(value);
             Append(value);
         }
 
         public override void WriteLine(string? value)
         {
-            _inner.WriteLine(value);
+            if (!Muted) _inner.WriteLine(value);
             Append(value);
             AppendChar('\n');
         }
