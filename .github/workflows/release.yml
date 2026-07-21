@@ -40,7 +40,7 @@ jobs:
 
       - name: Publish self-contained recompiler (win-x64 folder)
         run: >
-          dotnet publish RecompOne.Recompiler/RecompOne.Recompiler.csproj
+          dotnet publish RecompOne.Recompiler.Cli/RecompOne.Recompiler.Cli.csproj
           -c Release -r win-x64 --self-contained
           -o publish/recompiler
 
