@@ -456,15 +456,15 @@ internal static class HostWindow
         if (!ConfigManager.View.HideTopBar)
             MainMenuBar.Draw();
 
+        // In GameView the game fills the window via the background draw list, and
+        // the dockspace is skipped (its empty central node would paint opaque dark
+        // over the game). Panels are still drawn — with no dock host they float, so
+        // popups (Settings/Mods) work; the Output panel no-ops (see its Draw).
         if (ConfigManager.View.GameView)
-        {
             OutputPanel.DrawFullscreen();
-        }
         else
-        {
             DrawDockspace();
-            PanelManager.DrawPanels();
-        }
+        PanelManager.DrawPanels();
         MenuRegistry.DrawWindows();
         PanelManager.OverlayDraw?.Invoke();
         Modding.ModLoadingPopup.Draw();

@@ -29,6 +29,10 @@ internal sealed class OutputPanel : IPanel
 
     public void Draw()
     {
+        // In GameView the game is drawn full-window via DrawFullscreen, so the
+        // docked Output panel would just cover it (and reintroduce the gap) — skip.
+        if (Config.ConfigManager.View.GameView) return;
+
         ImGui.SetNextWindowSize(new Vector2(640, 480), ImGuiCond.FirstUseEver);
 
         bool open = IsOpen;
