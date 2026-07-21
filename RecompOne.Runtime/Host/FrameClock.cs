@@ -20,10 +20,11 @@ internal static class FrameClock
         uint seq = Runtime.WorldTickSeq;
         if (seq != _lastTickSeq) { _lastTickSeq = seq; return; }
 
-        // Menu/FMV present cap: follow the game's cap (floored at 60) so it stays
-        // smooth but can't run away.
-        double hz = Runtime.PresentCapHz;
-        double frameMs = 1000.0 / (hz >= 60.0 ? hz : 60.0);
+        // Menu/FMV pacing: a fixed 60Hz (the hardware VSync rate). These loops
+        // present outside the world pacer and advance per iteration (menu cursor,
+        // pad repeat), so pacing them faster than 60 makes menus run fast at high
+        // fps. Gameplay is unaffected — it takes the world-pacer skip above.
+        const double frameMs = 1000.0 / 60.0;
         _nextFrameMs += frameMs;
         double now = _clock.Elapsed.TotalMilliseconds;
         double wait = _nextFrameMs - now;

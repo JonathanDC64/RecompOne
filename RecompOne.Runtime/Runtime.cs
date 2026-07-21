@@ -68,14 +68,35 @@ public static class Runtime
         Host.BotControl.Tick();
         Sdk.LibCd.Tick();
         if (Mem != null) { Bios.BiosB.RefreshPad(Mem); Sdk.LibPad.Refresh(Mem); } //is this correct?
-        DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
+        // One real-time 60Hz vblank decision for this present. The vblank IRQ
+        // (DispatchIrq(0) -> KF2's vblank ISR -> func_80079038: the VSync-counter
+        // bump + sound-driver tick) and the psyq VSync event were both fired every
+        // present, so at 120/144fps the music sequencer and vblank-paced menus ran
+        // fast. Gate both to 60Hz (hardware rate); the world stays fast because
+        // it's paced by wall-clock delta-time, not the vblank.
+        bool vbl = VblankBeat();
+        if (vbl) DispatchIrq(0);
         PumpCdIsr();
         PumpCdDataReadyFallback();
-        // Fire the psyq vblank event (RootCounter 3, EvSpINT) each frame so games
-        // that registered an EvMdINTR vblank handler get ticked — e.g. KF2's frame
-        // pacing counter, which world-build waits on.
-        if (Mem != null && Cpu != null)
+        if (Mem != null && Cpu != null && vbl)
             Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
+        VsyncCounterProbe();
+    }
+
+    // Env-gated (KF2_VSCTR_LOG=1) probe of the game's VSync counter rate, to
+    // confirm the sound tick (func_80079038, which increments it) runs at ~60/s.
+    static double _vsCtrWindow; static uint _vsCtrLast; static bool _vsCtrInit;
+    static void VsyncCounterProbe()
+    {
+        if (Mem == null || System.Environment.GetEnvironmentVariable("KF2_VSCTR_LOG") != "1") return;
+        double now = _vblankClock.Elapsed.TotalSeconds;
+        uint cur = Mem.ReadU32(0x8009C07Cu);
+        if (!_vsCtrInit) { _vsCtrInit = true; _vsCtrLast = cur; _vsCtrWindow = now; return; }
+        if (now - _vsCtrWindow >= 1.0)
+        {
+            System.Console.WriteLine($"[vsctr] {(cur - _vsCtrLast) / (now - _vsCtrWindow):F0}/s");
+            _vsCtrLast = cur; _vsCtrWindow = now;
+        }
     }
 
     // The game registers a CD interrupt handler that its real CdInit would hook; we
@@ -173,6 +194,31 @@ public static class Runtime
     static bool _inBusyService;
     static uint _lastSeenVSyncCtr;
 
+    // Real-time ~60Hz gate for the vblank IRQ + sound-driver tick. On hardware the
+    // vblank fires at 60Hz no matter how fast the game renders; with delta-time we
+    // may present at 120/144, and firing the vblank event every present made the
+    // music sequencer and vblank-paced menus run fast. This caps vblank delivery
+    // at 60Hz. (When the present rate is below 60 it fires per-present, so low
+    // targets are unchanged.) The world loop is unaffected — it's paced by
+    // wall-clock delta-time (Speed.CapWaitMore), not this counter.
+    static readonly System.Diagnostics.Stopwatch _vblankClock = System.Diagnostics.Stopwatch.StartNew();
+    static double _nextVblankSec, _vblankLogWindow;
+    static int _vblankFires;
+    public static bool VblankBeat()
+    {
+        double now = _vblankClock.Elapsed.TotalSeconds;
+        if (now < _nextVblankSec) return false;
+        _nextVblankSec += 1.0 / 60.0;
+        if (now - _nextVblankSec > 0.25) _nextVblankSec = now + 1.0 / 60.0; // resync after a hitch
+        if (System.Environment.GetEnvironmentVariable("KF2_VBLANK_LOG") == "1")
+        {
+            _vblankFires++;
+            if (now - _vblankLogWindow >= 1.0)
+            { System.Console.WriteLine($"[vblank] {_vblankFires / (now - _vblankLogWindow):F0}/s"); _vblankFires = 0; _vblankLogWindow = now; }
+        }
+        return true;
+    }
+
     // Call once per present (~the game's normal frame cadence) from a busy-poll.
     public static void PumpBusyFrameServices()
     {
@@ -196,17 +242,22 @@ public static class Runtime
             Sdk.LibCd.Tick();
             PumpCdIsr();
             PumpCdDataReadyFallback();
-            // psyq vblank event (RootCounter 3, EvSpINT).
-            Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
-            // VSync callbacks (music sequencer). Only when its overlay is active
-            // (else it reads another overlay's memory and dispatches garbage).
-            // Snapshot/restore so ticking it doesn't clobber the poll's registers.
-            if (AuxAudioTick != null
-                && (AuxAudioTickOverlay == null || Dispatch.Dispatcher.IsActive(AuxAudioTickOverlay)))
+            // psyq vblank event + VSync callbacks (music sequencer), gated to a
+            // real-time 60Hz so busy-poll menus/dialogue keep hardware audio tempo
+            // regardless of how fast we present. Only tick AuxAudioTick when its
+            // overlay is active (else it reads another overlay's memory and
+            // dispatches garbage). Snapshot/restore so it doesn't clobber the
+            // poll's registers.
+            if (VblankBeat())
             {
-                var snap = Cpu.Snapshot();
-                AuxAudioTick(Cpu, Mem);
-                Cpu.Restore(snap);
+                Bios.BiosB.DeliverEventIntr(Cpu, Mem, 0xF2000003u, 0x0002u);
+                if (AuxAudioTick != null
+                    && (AuxAudioTickOverlay == null || Dispatch.Dispatcher.IsActive(AuxAudioTickOverlay)))
+                {
+                    var snap = Cpu.Snapshot();
+                    AuxAudioTick(Cpu, Mem);
+                    Cpu.Restore(snap);
+                }
             }
             if (VSyncCounterAddr != 0) _lastSeenVSyncCtr = Mem.ReadU32(VSyncCounterAddr);
         }
