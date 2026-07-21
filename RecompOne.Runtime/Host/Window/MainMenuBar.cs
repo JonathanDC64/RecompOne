@@ -34,6 +34,13 @@ internal static class MainMenuBar
                 ConfigManager.SaveView(PanelManager.Panels);
             }
 
+            bool gv = ConfigManager.View.GameView;
+            if (ImGui.MenuItem("Game fills window", "F2", gv))
+            {
+                ConfigManager.View.GameView = !gv;
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+
             bool fs = ConfigManager.View.WindowMode == HostWindow.WinFullscreen;
             if (ImGui.MenuItem("Fullscreen", "F11", fs))
             {

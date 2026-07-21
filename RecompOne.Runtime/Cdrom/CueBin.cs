@@ -19,6 +19,16 @@ public sealed class CueBin : IDisposable
 
     private void Parse(string cuePath)
     {
+        // A raw disc image (.bin/.img/.iso) with no cue sheet: treat the whole
+        // file as a single MODE2/2352 data track from sector 0 — the standard PS1
+        // single-track layout — so users can point at the .bin directly.
+        if (!cuePath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
+        {
+            const string m = "MODE2/2352";
+            _tracks.Add(new Track(cuePath, 1, m, GetSectorSize(m), GetDataOffset(m), 0));
+            return;
+        }
+
         string dir = Path.GetDirectoryName(Path.GetFullPath(cuePath)) ?? "";
         string? currentFile = null;
         int trackNum = 0;

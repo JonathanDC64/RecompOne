@@ -38,6 +38,16 @@ public class ViewConfig
         set => SetBool("HideTopBar", value);
     }
 
+    // Draw the game filling the window's work area (below the menu bar), no debug
+    // dockspace/panels — so there's no panel-chrome gap around the render. Menu
+    // bar (and Settings) stay available; F2 toggles back to the debug panels.
+    // Default off so the normal engine keeps its debug layout.
+    public bool GameView
+    {
+        get => GetBool("GameView");
+        set => SetBool("GameView", value);
+    }
+
     public bool Fullscreen
     {
         get => GetBool("Fullscreen");

@@ -90,6 +90,11 @@ internal static class HostWindow
             ToggleWindowMode(WinFullscreen);
         if (InputManager.ConsumeBorderlessToggle()) // Alt+Enter
             ToggleWindowMode(WinBorderless);
+        if (InputManager.ConsumeGameViewToggle()) // F2: game-fills-window <-> debug panels
+        {
+            ConfigManager.View.GameView = !ConfigManager.View.GameView;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
         _window.DoRender();
         MarkRendered();
     }
@@ -451,8 +456,15 @@ internal static class HostWindow
         if (!ConfigManager.View.HideTopBar)
             MainMenuBar.Draw();
 
-        DrawDockspace();
-        PanelManager.DrawPanels();
+        if (ConfigManager.View.GameView)
+        {
+            OutputPanel.DrawFullscreen();
+        }
+        else
+        {
+            DrawDockspace();
+            PanelManager.DrawPanels();
+        }
         MenuRegistry.DrawWindows();
         PanelManager.OverlayDraw?.Invoke();
         Modding.ModLoadingPopup.Draw();

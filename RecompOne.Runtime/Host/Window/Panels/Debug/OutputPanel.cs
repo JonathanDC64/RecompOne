@@ -15,6 +15,18 @@ internal sealed class OutputPanel : IPanel
     public static void SetTexture(uint id, int w, int h, float aspect = 0f)
         => (_texId, _texW, _texH, _aspect) = (id, w, h, aspect > 0f ? aspect : 4f / 3f);
 
+    // Draw the game across the window's WORK area (below the menu bar), aspect-fit
+    // and centered, via the background draw list — no ImGui window chrome/padding,
+    // so it truly fills the space. Used when ViewConfig.GameView is on.
+    public static void DrawFullscreen()
+    {
+        if (_texId == 0 || _texW <= 0 || _texH <= 0) return;
+        var vp = ImGui.GetMainViewport();
+        var img = FitAspect(new Vector2(_aspect, 1f), vp.WorkSize);
+        var pos = vp.WorkPos + (vp.WorkSize - img) * 0.5f;
+        ImGui.GetBackgroundDrawList().AddImage((nint)_texId, pos, pos + img);
+    }
+
     public void Draw()
     {
         ImGui.SetNextWindowSize(new Vector2(640, 480), ImGuiCond.FirstUseEver);

@@ -27,11 +27,13 @@ internal static unsafe class InputManager
     static bool _topBarToggle;
     static bool _fullscreenToggle;
     static bool _borderlessToggle;
+    static bool _gameViewToggle;
 
 
     public static bool ConsumeTopBarToggle() { var v = _topBarToggle; _topBarToggle = false; return v; }
     public static bool ConsumeFullscreenToggle(){ var v = _fullscreenToggle; _fullscreenToggle = false; return v; }
     public static bool ConsumeBorderlessToggle(){ var v = _borderlessToggle; _borderlessToggle = false; return v; }
+    public static bool ConsumeGameViewToggle(){ var v = _gameViewToggle; _gameViewToggle = false; return v; }
 
     public static void Initialize(IInputContext input)
     {
@@ -274,6 +276,7 @@ internal static unsafe class InputManager
     static void OnKeyDown(IKeyboard kb, Key key, int _)
     {
         if (key == Key.F1)  _topBarToggle = true;
+        if (key == Key.F2)  _gameViewToggle = true;
         if (key == Key.F11) _fullscreenToggle = true;
         // Alt+Enter -> borderless toggle (standard shortcut).
         if ((key == Key.Enter || key == Key.KeypadEnter)
