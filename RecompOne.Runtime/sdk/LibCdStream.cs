@@ -137,6 +137,10 @@ public static class LibCdStream
     private static bool _filterOn;
     private static byte _filterFile, _filterChannel;
 
+    // Sectors/second the drive would deliver at (150 double speed, 75 single),
+    // published by the CD controller on ReadS. -1 = use LibCd's current mode.
+    private static double _rate = -1;
+
     // XA files interleave channels: honour the game's Setfilter so only the
     // selected file/channel is decoded (decoding every channel mangles the audio).
     internal static void SetXaFilter(bool on, byte file, byte channel)
@@ -150,6 +154,7 @@ public static class LibCdStream
     {
         if (!InUse) return;
         _pendingLba = lba;
+        _rate = sectorsPerSecond;
 
         // A ReadS is a stream (re)start: drop any previous stream position so the
         // loop picks up the new LBA and repaces from now. Without this a second
@@ -250,6 +255,19 @@ public static class LibCdStream
                 continue;
             }
 
+            // Pace EVERY sector to the disc rate. Audio-only streams have no video
+            // frames, so the _primed gate below never engages for them and the file
+            // would decode at disk speed, overflowing the XA ring (the "jingle cut
+            // off" bug). Run a few sectors ahead of real time so the buffer keeps a
+            // cushion against Windows' coarse (~16ms) sleep granularity.
+            const double lead = 8;
+            var due = _clock.Elapsed.TotalSeconds * (_rate > 0 ? _rate : LibCd.SectorsPerSecond) + lead;
+            if (_streamLba - _streamStartLba + 1 > due)
+            {
+                Thread.Sleep(1);
+                continue;
+            }
+
             byte[] sec;
             try
             {
@@ -266,7 +284,10 @@ public static class LibCdStream
 
             if ((sec[2] & 0x04) != 0)
             {
-                Assets.Xa.XaRouter.Sector(_streamLba, sec, true);
+                // XA interleaves several file/channel pairs; decoding all of them at
+                // once mangles the audio, so honour the game's Setfilter.
+                if (!_filterOn || (sec[0] == _filterFile && sec[1] == _filterChannel))
+                    Assets.Xa.XaRouter.Sector(_streamLba, sec, true);
                 _streamLba++;
                 continue;
             }
