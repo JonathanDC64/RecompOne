@@ -304,6 +304,100 @@ public static class HostWindow
         }
 
         _window.DoRender();
+        MarkRendered();
+    }
+
+    // Pump host events + input from a busy pad-poll loop. Games that busy-poll
+    // the pad without yielding to VSync would otherwise never capture input (and
+    // the OS window would show "Not Responding"). Throttled so it stays cheap
+    // when called from a tight poll loop.
+    private static readonly System.Diagnostics.Stopwatch _inputPumpClock =
+        System.Diagnostics.Stopwatch.StartNew();
+
+    private static long _lastInputPumpMs;
+    private static long _lastRenderMs = -1000;
+
+    internal static void MarkRendered()
+    {
+        _lastRenderMs = _inputPumpClock.ElapsedMilliseconds;
+    }
+
+    public static void PumpInput()
+    {
+        PumpInternal(true);
+    }
+
+    // Window-only pump: events, input and a stale-render, WITHOUT the per-frame
+    // audio/CD/vblank servicing. Called from Interrupts.PollSlow, which already
+    // does that servicing — doing it twice ticks the sound driver twice and plays
+    // the music fast.
+    public static void PumpWindowOnly()
+    {
+        PumpInternal(false);
+    }
+
+    private static bool _inPump;
+
+    private static void PumpInternal(bool busyServices)
+    {
+        if (_headless || _window == null || _inPump) return;
+
+        var now = _inputPumpClock.ElapsedMilliseconds;
+        if (now - _lastInputPumpMs < 2) return;
+        _lastInputPumpMs = now;
+
+        _inPump = true;
+        try
+        {
+            PumpBody(now, busyServices);
+        }
+        finally
+        {
+            _inPump = false;
+        }
+    }
+
+    private static void PumpBody(long now, bool busyServices)
+    {
+        try
+        {
+            _window!.DoEvents();
+        }
+        catch
+        {
+        }
+
+        if (_window.IsClosing)
+        {
+            Runtime.Shutdown();
+            Environment.Exit(0);
+        }
+
+        InputManager.Poll();
+
+        // Present once the render path has gone stale (~66Hz) so the drawn
+        // dialogue shows and the ImGui menus stay interactive. During normal
+        // gameplay Present() renders every frame, keeping _lastRenderMs fresh,
+        // so this never fires.
+        if (now - _lastRenderMs > 15)
+        {
+            // A busy-poll (NPC dialogue, holding the menu button) starves the
+            // world loop's per-frame servicing, so keep the vblank IRQ / audio /
+            // CD alive (music sequencer, etc.) at this present cadence. It
+            // self-skips while the game is still ticking VSync, so normal
+            // play/menus aren't doubled. Skipped when the caller is
+            // Interrupts.PollSlow, which has already done that servicing.
+            if (busyServices) Runtime.PumpBusyFrameServices();
+            try
+            {
+                _window.DoRender();
+            }
+            catch
+            {
+            }
+
+            MarkRendered();
+        }
     }
 
     internal static void Pump()
@@ -438,6 +532,18 @@ public static class HostWindow
         _glBackend.InitGl();
         Hle.GpuHle.Active = _glBackend.Ready;
         Hle.GpuHle.Backend = _glBackend;
+
+        // Publish the real refresh rate so pacing can cap the present rate at what
+        // the display can actually show, instead of a conservative 65Hz fallback.
+        try
+        {
+            var mon = _window.Monitor ?? Silk.NET.Windowing.Monitor.GetMainMonitor(_window);
+            Runtime.MonitorRefreshHz = mon.VideoMode.RefreshRate ?? 0;
+            Console.WriteLine($"[display] monitor refresh = {Runtime.MonitorRefreshHz:F0} Hz");
+        }
+        catch
+        {
+        }
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 

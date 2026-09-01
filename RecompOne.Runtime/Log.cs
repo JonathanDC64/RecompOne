@@ -2,12 +2,24 @@ namespace RecompOne.Runtime;
 
 public static class Log
 {
+    // Master mute: stop writing to the real console (the frequent [prim]/[tick]/
+    // CD/MDEC lines use Console.WriteLine directly, and console I/O on Windows is
+    // synchronous and can stall the frame loop) — this is the lever to measure
+    // logging's performance cost. It works via ConsoleMirror, which still captures
+    // output to its in-memory ring while muted, so crash logs keep their recent
+    // console output.
+    public static bool Muted
+    {
+        get => Diagnostics.ConsoleMirror.Muted;
+        set { Diagnostics.ConsoleMirror.Install(); Diagnostics.ConsoleMirror.Muted = value; }
+    }
+
     public static bool BiosOn = false;
     public static bool SpuOn = false;
     public static bool GpuOn = false;
     public static bool DmaOn = false;
     public static bool CdOn = false;
-    public static bool SdkOn = false;
+    public static bool SdkOn = Environment.GetEnvironmentVariable("KF2_SDKLOG") == "1";
     public static bool MdecOn = false;
     public static bool IrqOn = false;
 

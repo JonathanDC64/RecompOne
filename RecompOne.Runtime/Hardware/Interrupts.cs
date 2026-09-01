@@ -104,7 +104,20 @@ public static class Interrupts
     {
         _countdown = PollInterval;
         TickVBlank();
-        if (_inHandler || _servicing || !_irqEnabled) return;
+        // Never pump the host from inside an ISR (re-entrant render/input).
+        if (_inHandler || _servicing) return;
+
+        // Keep the window alive through game busy-wait loops. The recompiler emits
+        // a Poll at every loop back-edge, so this covers any spin the game does —
+        // without it a loop that never reaches VSync (e.g. OPEN.EXE's
+        // func_80013EBC boot wait) leaves the window unresponsive while audio,
+        // being on its own thread, keeps playing. Window-only: PollSlow itself
+        // does the vblank/CD servicing just below.
+        Host.HostWindow.PumpWindowOnly();
+        // Keep the sound driver on a wall-clock 60Hz beat independent of framerate.
+        Runtime.PumpVblankAudio();
+
+        if (!_irqEnabled) return;
 
         var snap = cpu.Snapshot();
         try

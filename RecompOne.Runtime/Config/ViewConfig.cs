@@ -128,4 +128,71 @@ public class ViewConfig
         get => Math.Clamp(GetFloat("UiScale", 1f), 0.5f, 3f);
         set => SetFloat("UiScale", Math.Clamp(value, 0.5f, 3f));
     }
+
+    // Draw the game filling the window's work area (below the menu bar), no debug
+    // dockspace/panels — so there's no panel-chrome gap around the render. Menu
+    // bar (and Settings) stay available; F2 toggles back to the debug panels.
+    // Default off so the normal engine keeps its debug layout.
+    public bool GameView
+    {
+        get => GetBool("GameView");
+        set => SetBool("GameView", value);
+    }
+
+    // 0 = Windowed, 1 = Fullscreen (exclusive), 2 = Borderless. Defaults from the
+    // legacy Fullscreen bool so existing configs keep their fullscreen setting.
+    public int WindowMode
+    {
+        get => GetInt("WindowMode", GetBool("Fullscreen") ? 1 : 0);
+        set => SetInt("WindowMode", value);
+    }
+
+    public bool PgxpGeometryCorrection
+    {
+        get => GetBool("PgxpGeometryCorrection");
+        set => SetBool("PgxpGeometryCorrection", value);
+    }
+
+    public bool PgxpPerspectiveTextures
+    {
+        get => GetBool("PgxpPerspectiveTextures", true);
+        set => SetBool("PgxpPerspectiveTextures", value);
+    }
+
+    public bool PgxpCpuMode
+    {
+        get => GetBool("PgxpCpuMode", true);
+        set => SetBool("PgxpCpuMode", value);
+    }
+
+    public bool PgxpPerspectiveColors
+    {
+        get => GetBool("PgxpPerspectiveColors");
+        set => SetBool("PgxpPerspectiveColors", value);
+    }
+
+    public bool PgxpCullingCorrection
+    {
+        get => GetBool("PgxpCullingCorrection", true);
+        set => SetBool("PgxpCullingCorrection", value);
+    }
+
+    public bool TextureFilter
+    {
+        get => GetBool("TextureFilter");
+        set => SetBool("TextureFilter", value);
+    }
+
+    public bool SpriteTextureFilter
+    {
+        get => GetBool("SpriteTextureFilter");
+        set => SetBool("SpriteTextureFilter", value);
+    }
+
+    // Anisotropic filtering for world textures: 1 = off, else 2/4/8/16 taps.
+    public int AnisoLevel
+    {
+        get => GetInt("AnisoLevel", 1);
+        set => SetInt("AnisoLevel", value);
+    }
 }

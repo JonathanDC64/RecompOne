@@ -22,10 +22,13 @@ public static class XaAudio
     private static short _s0L, _s0R, _s1L, _s1R;
     private static int _underrun;
 
+    static readonly bool XaLog = System.Environment.GetEnvironmentVariable("KF2_XALOG") == "1";
+
     public static void Reset()
     {
         lock (_gate)
         {
+            if (XaLog && _playing) System.Console.WriteLine("[xa] STOP (reset)");
             _oldL = _olderL = _oldR = _olderR = 0;
             _writeIdx = _readIdx = _count = 0;
             _playing = false;

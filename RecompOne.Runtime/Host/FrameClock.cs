@@ -20,6 +20,7 @@ internal static class FrameClock
     public static double LastWaitMs { get; private set; }
 
     private static double _lastStart;
+    private static uint _lastTickSeq;
 
 
     public static void Throttle()
@@ -37,8 +38,32 @@ internal static class FrameClock
             _fpsFrames = 0;
         }
 
+        // When the game's world pacer (Speed.CapWaitMore) is driving frames it
+        // already paces both ticks AND presents; throttling again here just
+        // double-sleeps and pins the rate to FrameMs (60Hz) however high the
+        // target. Detect it by the world tick sequence advancing since the last
+        // present and bow out, re-basing the grid so the next throttled present
+        // doesn't burst. Menus/FMVs present outside the world pacer, don't bump
+        // the sequence, and so keep the fixed 60Hz pacing below.
+        var seq = Runtime.WorldTickSeq;
+        if (seq != _lastTickSeq)
+        {
+            _lastTickSeq = seq;
+            _nextFrameMs = now;
+            LastWaitMs = 0;
+            return;
+        }
+
         _nextFrameMs += FrameMs;
         var wait = _nextFrameMs - now;
+
+        // Never schedule more than one frame ahead: callers presenting faster than
+        // the cap would otherwise push the grid forward and stall in bursts.
+        if (wait > FrameMs)
+        {
+            _nextFrameMs = now + FrameMs;
+            wait = FrameMs;
+        }
 
         if (wait < -100)
         {

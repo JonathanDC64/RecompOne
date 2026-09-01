@@ -4,6 +4,10 @@ namespace RecompOne.Runtime.Diagnostics;
 
 public static class ConsoleMirror
 {
+    // Master mute for stdout: silences the console writers but keeps the
+    // crash-log mirror capturing, so a crash report still has the recent output.
+    public static bool Muted;
+
     private const int MaxLines = 4000;
 
     private static readonly object _gate = new();
@@ -94,19 +98,19 @@ public static class ConsoleMirror
 
         public override void Write(char value)
         {
-            _inner.Write(value);
+            if (!Muted) _inner.Write(value);
             AppendChar(value);
         }
 
         public override void Write(string? value)
         {
-            _inner.Write(value);
+            if (!Muted) _inner.Write(value);
             Append(value);
         }
 
         public override void WriteLine(string? value)
         {
-            _inner.WriteLine(value);
+            if (!Muted) _inner.WriteLine(value);
             Append(value);
             AppendChar('\n');
         }
