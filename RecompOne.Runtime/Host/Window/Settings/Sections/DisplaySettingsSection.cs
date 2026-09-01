@@ -10,6 +10,8 @@ internal sealed class DisplaySettingsSection : ISettingsSection
     public int Order => 5;
 
     private static readonly string[] Backends = ["auto", "gl45", "gl33", "gl21"];
+    private static readonly int[] AnisoLevels = [1, 2, 4, 8, 16];
+    private static readonly string[] AnisoLabels = ["Off", "2x", "4x", "8x", "16x"];
 
     public void Draw()
     {
@@ -69,6 +71,17 @@ internal sealed class DisplaySettingsSection : ISettingsSection
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Usually best left off: the HUD, text and 2D sprites are drawn at native resolution and look softer when filtered.");
+
+        var anisoIdx = Array.IndexOf(AnisoLevels, ConfigManager.View.AnisoLevel);
+        if (anisoIdx < 0) anisoIdx = 0;
+        if (ImGui.Combo("Anisotropic filtering", ref anisoIdx, AnisoLabels, AnisoLabels.Length))
+        {
+            ConfigManager.View.AnisoLevel = AnisoLevels[anisoIdx];
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Sharpens textures on surfaces seen at a glancing angle, such as distant floors and walls. World polygons only, so it needs PGXP on.");
 
         var dither = ConfigManager.View.Dither;
         if (ImGui.Checkbox("Dithering", ref dither))

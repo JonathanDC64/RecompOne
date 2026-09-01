@@ -154,6 +154,7 @@ internal static class GlShaders
                                  uniform int   uPctCol; // 1 = perspective-correct vertex colours
                                  uniform int   uFilter;       // 3D world polygons: 0 = nearest, 1 = bilinear
                                  uniform int   uFilterSprite; // 2D rects/sprites/UI: 0 = nearest, 1 = bilinear
+                                 uniform int   uAniso;        // world polys: 1 = off, else 2/4/8/16 taps
 
                                  const int ditherTbl[16] = int[16](
                                      -4,  0, -3,  1,
@@ -189,6 +190,36 @@ internal static class GlShaders
                                  }
                                  // PS1 transparency: an all-zero 16-bit texel is "not drawn".
                                  bool isOpaque(vec4 t) { return !(t.rgb == vec3(0.0) && t.a < 0.5); }
+
+                                 // One base-filtered sample at uv: nearest (flt==0) or bilinear (flt==1).
+                                 // decX/decY are the screen-gradient signs, passed in because dFdx must be
+                                 // taken at uniform control flow. `ow` returns opaque coverage 0..1. Taps
+                                 // clamp to the primitive's UV box so they cannot leave this texture.
+                                 vec4 sampleBase(vec2 uv, int flt, bool decX, bool decY, out float ow) {
+                                     ivec2 lo = uvLimits.xy, hi = uvLimits.zw;
+                                     ivec2 base = ivec2(decX ? ceil(uv.x - 0.0001) : floor(uv.x + 0.0001),
+                                                        decY ? ceil(uv.y - 0.0001) : floor(uv.y + 0.0001));
+                                     if (flt == 0) {
+                                         vec4 t = sampleTexelAt(clamp(base, lo, hi));
+                                         ow = isOpaque(t) ? 1.0 : 0.0;
+                                         return t;
+                                     }
+                                     vec2 ttl = (uv - vec2(base)) + vec2(decX ? 0.5 : -0.5, decY ? 0.5 : -0.5);
+                                     ivec2 off = ivec2(sign(ttl.x), sign(ttl.y));
+                                     vec2 w = abs(ttl);
+                                     vec4 t00 = sampleTexelAt(clamp(base, lo, hi));
+                                     vec4 t10 = sampleTexelAt(clamp(base + ivec2(off.x, 0), lo, hi));
+                                     vec4 t01 = sampleTexelAt(clamp(base + ivec2(0, off.y), lo, hi));
+                                     vec4 t11 = sampleTexelAt(clamp(base + ivec2(off.x, off.y), lo, hi));
+                                     float w00 = (1.0 - w.x) * (1.0 - w.y) * (isOpaque(t00) ? 1.0 : 0.0);
+                                     float w10 = w.x * (1.0 - w.y) * (isOpaque(t10) ? 1.0 : 0.0);
+                                     float w01 = (1.0 - w.x) * w.y * (isOpaque(t01) ? 1.0 : 0.0);
+                                     float w11 = w.x * w.y * (isOpaque(t11) ? 1.0 : 0.0);
+                                     ow = w00 + w10 + w01 + w11;
+                                     if (ow < 1e-4) return vec4(0.0);
+                                     return vec4((t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / ow,
+                                                 (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ow);
+                                 }
 
                                  vec3 quant5(ivec3 c8) {
                                      if (vDither != 0) {
@@ -240,37 +271,41 @@ internal static class GlShaders
 
                                      vec4 texel;
                                      int flt = (vPersp == 1) ? uFilter : uFilterSprite;
+                                     int aniso = (vPersp == 1) ? uAniso : 1; // AF on world polygons only
 
-                                     if (flt == 0 || vRepClut != 0) {
-                                         texel = sampleTexelAt(ivec2(rawU, rawV));
+                                     if (vRepClut != 0) {
+                                         texel = sampleTexelAt(ivec2(rawU, rawV)); // replaced CLUT: never filtered
                                      } else {
-                                         // Centre on the same texel nearest would pick, and blend only
-                                         // toward the sub-texel neighbour, so enabling the filter does
-                                         // not shift the texture.
                                          bool decX = dFdx(vUV.x) < 0.0, decY = dFdy(vUV.y) < 0.0;
-                                         ivec2 base = ivec2(decX ? ceil(vUV.x - 0.0001) : floor(vUV.x + 0.0001),
-                                                            decY ? ceil(vUV.y - 0.0001) : floor(vUV.y + 0.0001));
-                                         vec2 ttl = (vUV - vec2(base)) + vec2(decX ? 0.5 : -0.5, decY ? 0.5 : -0.5);
-                                         ivec2 off = ivec2(sign(ttl.x), sign(ttl.y));
-                                         vec2 w = abs(ttl); // 0..0.5
-                                         // Clamp taps to this primitive's UV box: no reading into the
-                                         // neighbouring sub-texture on the page, no tile-edge seams.
-                                         ivec2 lo = uvLimits.xy, hi = uvLimits.zw;
-                                         vec4 t00 = sampleTexelAt(clamp(base, lo, hi));
-                                         vec4 t10 = sampleTexelAt(clamp(base + ivec2(off.x, 0), lo, hi));
-                                         vec4 t01 = sampleTexelAt(clamp(base + ivec2(0, off.y), lo, hi));
-                                         vec4 t11 = sampleTexelAt(clamp(base + ivec2(off.x, off.y), lo, hi));
-                                         float w00 = (1.0 - w.x) * (1.0 - w.y) * (isOpaque(t00) ? 1.0 : 0.0);
-                                         float w10 = w.x * (1.0 - w.y) * (isOpaque(t10) ? 1.0 : 0.0);
-                                         float w01 = (1.0 - w.x) * w.y * (isOpaque(t01) ? 1.0 : 0.0);
-                                         float w11 = w.x * w.y * (isOpaque(t11) ? 1.0 : 0.0);
-                                         float ws = w00 + w10 + w01 + w11; // opaque coverage
-                                         // BinAlpha: PS1 alpha is 1-bit, so keep the pixel only where
-                                         // coverage >= 50%. Without this filtered edges grow and
-                                         // sprites/UI get visibly fatter than with nearest.
-                                         if (ws < 0.5) discard;
-                                         texel = vec4((t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / ws,
-                                                      (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ws);
+                                         float ow;
+                                         if (aniso > 1) {
+                                             // Spread taps along the longer of the two UV screen-gradients: that is
+                                             // the axis the texture is compressed along. Averaging the DECODED
+                                             // colours is required - these are CLUT indices before the lookup.
+                                             vec2 dx = dFdx(vUV), dy = dFdy(vUV);
+                                             float lx = length(dx), ly = length(dy);
+                                             vec2 major = (lx > ly) ? dx : dy;
+                                             float ratio = max(lx, ly) / max(min(lx, ly), 1e-3);
+                                             int taps = clamp(int(ratio + 0.5), 1, aniso); // adapt to real anisotropy
+                                             vec3 acc = vec3(0.0);
+                                             float aacc = 0.0, wsum = 0.0;
+                                             for (int i = 0; i < 16; i++) {
+                                                 if (i >= taps) break;
+                                                 float t = (float(i) + 0.5) / float(taps) - 0.5;
+                                                 float o;
+                                                 vec4 sm = sampleBase(vUV + major * t, flt, decX, decY, o);
+                                                 acc += sm.rgb * o;
+                                                 aacc += sm.a * o;
+                                                 wsum += o;
+                                             }
+                                             if (wsum < 0.5 * float(taps)) discard; // mostly transparent footprint
+                                             texel = vec4(acc / max(wsum, 1e-4), aacc / max(wsum, 1e-4));
+                                         } else {
+                                             texel = sampleBase(vUV, flt, decX, decY, ow);
+                                             // BinAlpha: PS1 alpha is 1-bit, so keep the pixel only where opaque
+                                             // coverage >= 50%, else filtered edges grow and sprites/UI fatten.
+                                             if (ow < 0.5) discard;
+                                         }
                                      }
 
                                      if (vRepClut != 0 && texMode != 2) {

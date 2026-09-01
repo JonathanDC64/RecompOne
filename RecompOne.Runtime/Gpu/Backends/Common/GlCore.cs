@@ -33,7 +33,7 @@ public sealed class GlCore : IGpuBackend
     private long _frame;
 
     private uint _vao, _vbo, _presentVao, _presentVbo, _progPrim, _progPresent, _progPresent24;
-    private int _uPctTex, _uPctCol, _uFilter, _uFilterSprite;
+    private int _uPctTex, _uPctCol, _uFilter, _uFilterSprite, _uAniso;
     private float _uvMinU, _uvMinV, _uvMaxU, _uvMaxV;
     private uint _presentFbo, _presentTex;
     private int _presentW, _presentH;
@@ -114,6 +114,7 @@ public sealed class GlCore : IGpuBackend
         _uPctTex = _gl.GetUniformLocation(_progPrim, "uPctTex");
         _uFilter = _gl.GetUniformLocation(_progPrim, "uFilter");
         _uFilterSprite = _gl.GetUniformLocation(_progPrim, "uFilterSprite");
+        _uAniso = _gl.GetUniformLocation(_progPrim, "uAniso");
         _uPctCol = _gl.GetUniformLocation(_progPrim, "uPctCol");
 
         _gl.UseProgram(_progPrim);
@@ -877,6 +878,7 @@ public sealed class GlCore : IGpuBackend
         _gl.Uniform1(_uPctCol, view.PgxpGeometryCorrection && view.PgxpPerspectiveColors ? 1 : 0);
         _gl.Uniform1(_uFilter, view.TextureFilter ? 1 : 0);
         _gl.Uniform1(_uFilterSprite, view.SpriteTextureFilter ? 1 : 0);
+        _gl.Uniform1(_uAniso, Math.Clamp(view.AnisoLevel, 1, 16));
 
         if (rt != null)
         {
