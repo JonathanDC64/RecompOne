@@ -50,6 +50,26 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         if (scale != Hle.GlVram.Scale)
             ImGui.TextDisabled(Localization.T("settings.display.restart_pending"));
 
+        var filter = ConfigManager.View.TextureFilter;
+        if (ImGui.Checkbox("Bilinear filtering (world)", ref filter))
+        {
+            ConfigManager.View.TextureFilter = filter;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Smooths textures on 3D polygons. Taps are clamped to each primitive's UV box, so textures cannot bleed into their neighbours on the same page. Requires PGXP to tell world polygons from 2D.");
+
+        var filterSprite = ConfigManager.View.SpriteTextureFilter;
+        if (ImGui.Checkbox("Bilinear filtering (sprites/UI)", ref filterSprite))
+        {
+            ConfigManager.View.SpriteTextureFilter = filterSprite;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Usually best left off: the HUD, text and 2D sprites are drawn at native resolution and look softer when filtered.");
+
         var dither = ConfigManager.View.Dither;
         if (ImGui.Checkbox("Dithering", ref dither))
         {

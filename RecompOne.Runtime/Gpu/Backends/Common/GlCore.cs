@@ -17,6 +17,10 @@ public sealed class GlCore : IGpuBackend
         // affine mapping exactly, so untouched prims (2D rects, sprites, UI, and
         // any triangle not fully resolved) behave as before.
         public float W;
+
+        // This primitive's UV bounding box. Filter taps clamp to it so they can't
+        // read into the neighbouring sub-texture on the same 256x256 page.
+        public float UMin, VMin, UMax, VMax;
     }
 
     private const int MaxVerts = 0x40000;
@@ -29,7 +33,8 @@ public sealed class GlCore : IGpuBackend
     private long _frame;
 
     private uint _vao, _vbo, _presentVao, _presentVbo, _progPrim, _progPresent, _progPresent24;
-    private int _uPctTex, _uPctCol;
+    private int _uPctTex, _uPctCol, _uFilter, _uFilterSprite;
+    private float _uvMinU, _uvMinV, _uvMaxU, _uvMaxV;
     private uint _presentFbo, _presentTex;
     private int _presentW, _presentH;
     private bool _presentNearest;
@@ -107,6 +112,8 @@ public sealed class GlCore : IGpuBackend
         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
         _uPctTex = _gl.GetUniformLocation(_progPrim, "uPctTex");
+        _uFilter = _gl.GetUniformLocation(_progPrim, "uFilter");
+        _uFilterSprite = _gl.GetUniformLocation(_progPrim, "uFilterSprite");
         _uPctCol = _gl.GetUniformLocation(_progPrim, "uPctCol");
 
         _gl.UseProgram(_progPrim);
@@ -151,6 +158,8 @@ public sealed class GlCore : IGpuBackend
         _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)28);
         _gl.EnableVertexAttribArray(5);
         _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)36);
+        _gl.EnableVertexAttribArray(6);
+        _gl.VertexAttribPointer(6, 4, VertexAttribPointerType.Float, false, stride, (void*)40);
 
         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
         _presentVao = _gl.GenVertexArray();
@@ -526,6 +535,16 @@ public sealed class GlCore : IGpuBackend
     // #version 330 and the GL2.1 shaders read, so one check covers every backend.
     private static bool DitherEnabled => Config.ConfigManager.View.Dither;
 
+    // The UV box the filter taps may not leave. Untextured prims still get a
+    // (degenerate) box; the shader only consults it on the filtered path.
+    private void SetUvBounds(int uMin, int vMin, int uMax, int vMax)
+    {
+        _uvMinU = uMin;
+        _uvMinV = vMin;
+        _uvMaxU = uMax;
+        _uvMaxV = vMax;
+    }
+
     private bool DitherOf(in PrimFlags f)
     {
         return DitherEnabled && _env.Dither && (f.Gouraud || (f.Textured && !f.RawTexture));
@@ -559,6 +578,7 @@ public sealed class GlCore : IGpuBackend
             Clut = f.Clut & 0x7FFF,
             Texpage = tpage,
             U = v.U, V = v.V,
+            UMin = _uvMinU, VMin = _uvMinV, UMax = _uvMaxU, VMax = _uvMaxV,
             // Guard: anything that did not come from a PGXP-resolved triangle
             // leaves W at 0, which would collapse the vertex. 1 = affine.
             W = v.W > 0f ? v.W : 1f
@@ -567,9 +587,9 @@ public sealed class GlCore : IGpuBackend
 
     public void DrawTri(in HleVertex a, in HleVertex b, in HleVertex c, in PrimFlags f)
     {
-        ResolveReplacement(f,
-            (int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
+        SetUvBounds((int)Math.Min(a.U, Math.Min(b.U, c.U)), (int)Math.Min(a.V, Math.Min(b.V, c.V)),
             (int)Math.Max(a.U, Math.Max(b.U, c.U)), (int)Math.Max(a.V, Math.Max(b.V, c.V)));
+        ResolveReplacement(f, (int)_uvMinU, (int)_uvMinV, (int)_uvMaxU, (int)_uvMaxV);
         Begin(f, 3);
         var dith = DitherOf(f);
         _verts[_count++] = V(a, f, dith);
@@ -579,6 +599,7 @@ public sealed class GlCore : IGpuBackend
 
     public void DrawRect(in HleRect r, in PrimFlags f)
     {
+        SetUvBounds(r.U, r.V, r.U + Math.Max(0, r.W - 1), r.V + Math.Max(0, r.H - 1));
         ResolveReplacement(f, r.U, r.V, r.U + Math.Max(0, r.W - 1), r.V + Math.Max(0, r.H - 1));
         Begin(f, 6);
         var a = new HleVertex { X = r.X, Y = r.Y, R = r.R, G = r.G, B = r.B, U = r.U, V = r.V };
@@ -598,6 +619,7 @@ public sealed class GlCore : IGpuBackend
     {
         _pendingRepTex = 0;
         _pendingRepClut = 0;
+        SetUvBounds(0, 0, 255, 255);
         Begin(f, 6);
         var dith = DitherEnabled && _env.Dither;
         float x1 = a.X, y1 = a.Y;
@@ -853,6 +875,8 @@ public sealed class GlCore : IGpuBackend
         var view = Config.ConfigManager.View;
         _gl.Uniform1(_uPctTex, view.PgxpGeometryCorrection && view.PgxpPerspectiveTextures ? 1 : 0);
         _gl.Uniform1(_uPctCol, view.PgxpGeometryCorrection && view.PgxpPerspectiveColors ? 1 : 0);
+        _gl.Uniform1(_uFilter, view.TextureFilter ? 1 : 0);
+        _gl.Uniform1(_uFilterSprite, view.SpriteTextureFilter ? 1 : 0);
 
         if (rt != null)
         {

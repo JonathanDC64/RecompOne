@@ -64,6 +64,7 @@ internal static class GlShaders
                                  layout(location = 3) in float inTexpageF;
                                  layout(location = 4) in vec2  inUV;
                                  layout(location = 5) in float inW;
+                                 layout(location = 6) in vec4  inUvLimits; // primitive UV bbox (uMin,vMin,uMax,vMax)
 
                                  out vec4 vColorP;
                                  out vec2 vUVP;
@@ -74,6 +75,8 @@ internal static class GlShaders
                                  flat out int   texMode;
                                  flat out int   vDither;
                                  flat out int   vRepClut;
+                                 flat out int   vPersp;   // 1 = perspective 3D poly (W != 1); 0 = 2D rect/sprite
+                                 flat out ivec4 uvLimits; // clamp for filter taps, so they can't leave this primitive
 
                                  uniform vec2 uVertexOffset;
                                  uniform vec2 uPosBias;
@@ -85,6 +88,8 @@ internal static class GlShaders
                                      // smooth varyings perspective-correctly. W == 1 reproduces the PS1's
                                      // affine mapping exactly, so this is a no-op when PGXP is off.
                                      gl_Position = vec4(p * inW, 0.0, inW);
+                                     vPersp = (inW != 1.0) ? 1 : 0;
+                                     uvLimits = ivec4(inUvLimits + 0.5);
 
                                      int inClut = int(inClutF + 0.5);
                                      int inTexpage = int(inTexpageF + 0.5);
@@ -125,6 +130,8 @@ internal static class GlShaders
                                  flat in int   texMode;
                                  flat in int   vDither;
                                  flat in int   vRepClut;
+                                 flat in int   vPersp;
+                                 flat in ivec4 uvLimits;
 
                                  layout(location = 0, index = 0) out vec4 FragColor;
                                  layout(location = 0, index = 1) out vec4 BlendColor;
@@ -145,6 +152,8 @@ internal static class GlShaders
                                  uniform vec2  uPosBias;
                                  uniform int   uPctTex; // 1 = perspective-correct texture coords (PGXP)
                                  uniform int   uPctCol; // 1 = perspective-correct vertex colours
+                                 uniform int   uFilter;       // 3D world polygons: 0 = nearest, 1 = bilinear
+                                 uniform int   uFilterSprite; // 2D rects/sprites/UI: 0 = nearest, 1 = bilinear
 
                                  const int ditherTbl[16] = int[16](
                                      -4,  0, -3,  1,
@@ -158,6 +167,29 @@ internal static class GlShaders
                                      vec4 p = fetch(c);
                                      return u5(p.r) | (u5(p.g) << 5) | (u5(p.b) << 10) | (int(ceil(p.a)) << 15);
                                  }
+                                 // Decode ONE texel at integer UV: texture-window wrap, then the
+                                 // CLUT lookup (honouring a replacement CLUT) or a direct fetch.
+                                 // Factored out of main so the filter can take several taps.
+                                 vec4 sampleTexelAt(ivec2 raw) {
+                                     ivec2 t = ((raw & uTexWindow.xy) | uTexWindow.zw) & ivec2(0xff);
+                                     if (texMode == 0) {
+                                         int s = fetch16(ivec2(pageBase.x + (t.x >> 2), pageBase.y + t.y));
+                                         int idx = (s >> ((t.x & 3) << 2)) & 0xf;
+                                         return vRepClut != 0
+                                             ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
+                                             : fetch(ivec2(clutBase.x + idx, clutBase.y));
+                                     } else if (texMode == 1) {
+                                         int s = fetch16(ivec2(pageBase.x + (t.x >> 1), pageBase.y + t.y));
+                                         int idx = (s >> ((t.x & 1) << 3)) & 0xff;
+                                         return vRepClut != 0
+                                             ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
+                                             : fetch(ivec2(clutBase.x + idx, clutBase.y));
+                                     }
+                                     return fetch(ivec2(pageBase.x + t.x, pageBase.y + t.y));
+                                 }
+                                 // PS1 transparency: an all-zero 16-bit texel is "not drawn".
+                                 bool isOpaque(vec4 t) { return !(t.rgb == vec3(0.0) && t.a < 0.5); }
+
                                  vec3 quant5(ivec3 c8) {
                                      if (vDither != 0) {
                                          ivec2 vp = ivec2(floor(gl_FragCoord.xy / float(uScale) - uPosBias));
@@ -207,21 +239,38 @@ internal static class GlShaders
                                      }
 
                                      vec4 texel;
+                                     int flt = (vPersp == 1) ? uFilter : uFilterSprite;
 
-                                     if (texMode == 0) {
-                                         int s = fetch16(ivec2(pageBase.x + (uv.x >> 2), pageBase.y + uv.y));
-                                         int idx = (s >> ((uv.x & 3) << 2)) & 0xf;
-                                         texel = vRepClut != 0
-                                             ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
-                                             : fetch(ivec2(clutBase.x + idx, clutBase.y));
-                                     } else if (texMode == 1) {
-                                         int s = fetch16(ivec2(pageBase.x + (uv.x >> 1), pageBase.y + uv.y));
-                                         int idx = (s >> ((uv.x & 1) << 3)) & 0xff;
-                                         texel = vRepClut != 0
-                                             ? texture(uRepClut, vec2((float(idx) + 0.5) / uRepClutCount, 0.5))
-                                             : fetch(ivec2(clutBase.x + idx, clutBase.y));
+                                     if (flt == 0 || vRepClut != 0) {
+                                         texel = sampleTexelAt(ivec2(rawU, rawV));
                                      } else {
-                                         texel = fetch(ivec2(pageBase.x + uv.x, pageBase.y + uv.y));
+                                         // Centre on the same texel nearest would pick, and blend only
+                                         // toward the sub-texel neighbour, so enabling the filter does
+                                         // not shift the texture.
+                                         bool decX = dFdx(vUV.x) < 0.0, decY = dFdy(vUV.y) < 0.0;
+                                         ivec2 base = ivec2(decX ? ceil(vUV.x - 0.0001) : floor(vUV.x + 0.0001),
+                                                            decY ? ceil(vUV.y - 0.0001) : floor(vUV.y + 0.0001));
+                                         vec2 ttl = (vUV - vec2(base)) + vec2(decX ? 0.5 : -0.5, decY ? 0.5 : -0.5);
+                                         ivec2 off = ivec2(sign(ttl.x), sign(ttl.y));
+                                         vec2 w = abs(ttl); // 0..0.5
+                                         // Clamp taps to this primitive's UV box: no reading into the
+                                         // neighbouring sub-texture on the page, no tile-edge seams.
+                                         ivec2 lo = uvLimits.xy, hi = uvLimits.zw;
+                                         vec4 t00 = sampleTexelAt(clamp(base, lo, hi));
+                                         vec4 t10 = sampleTexelAt(clamp(base + ivec2(off.x, 0), lo, hi));
+                                         vec4 t01 = sampleTexelAt(clamp(base + ivec2(0, off.y), lo, hi));
+                                         vec4 t11 = sampleTexelAt(clamp(base + ivec2(off.x, off.y), lo, hi));
+                                         float w00 = (1.0 - w.x) * (1.0 - w.y) * (isOpaque(t00) ? 1.0 : 0.0);
+                                         float w10 = w.x * (1.0 - w.y) * (isOpaque(t10) ? 1.0 : 0.0);
+                                         float w01 = (1.0 - w.x) * w.y * (isOpaque(t01) ? 1.0 : 0.0);
+                                         float w11 = w.x * w.y * (isOpaque(t11) ? 1.0 : 0.0);
+                                         float ws = w00 + w10 + w01 + w11; // opaque coverage
+                                         // BinAlpha: PS1 alpha is 1-bit, so keep the pixel only where
+                                         // coverage >= 50%. Without this filtered edges grow and
+                                         // sprites/UI get visibly fatter than with nearest.
+                                         if (ws < 0.5) discard;
+                                         texel = vec4((t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / ws,
+                                                      (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ws);
                                      }
 
                                      if (vRepClut != 0 && texMode != 2) {
