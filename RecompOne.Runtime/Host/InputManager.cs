@@ -89,6 +89,15 @@ internal static unsafe class InputManager
         return pad == 0 ? _pad0 != null : _pad1 != null;
     }
 
+    private static bool _borderlessToggle;
+
+    public static bool ConsumeBorderlessToggle()
+    {
+        var v = _borderlessToggle;
+        _borderlessToggle = false;
+        return v;
+    }
+
     public static bool IsKeyDown(Key k)
     {
         return _keyboard?.IsKeyPressed(k) ?? false;
@@ -445,6 +454,10 @@ internal static unsafe class InputManager
     {
         if (key == Key.F1) _topBarToggle = true;
         if (key == Key.F11) _fullscreenToggle = true;
+        // Alt+Enter -> borderless (the standard shortcut).
+        if ((key == Key.Enter || key == Key.KeypadEnter)
+            && (kb.IsKeyPressed(Key.AltLeft) || kb.IsKeyPressed(Key.AltRight)))
+            _borderlessToggle = true;
 
         if (EventBus.HasAnyListeners<KeyboardEvent>())
             EventBus.Dispatch(new KeyboardEvent

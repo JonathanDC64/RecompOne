@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using ImGuiNET;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -121,7 +122,9 @@ public static class HostWindow
                     VSync = ConfigManager.View.VSync,
                     UpdatesPerSecond = 0,
                     FramesPerSecond = 0,
-                    WindowState = ConfigManager.View.Fullscreen ? WindowState.Fullscreen : WindowState.Normal,
+                    WindowState = ConfigManager.View.WindowMode == WinFullscreen
+                        ? WindowState.Fullscreen
+                        : WindowState.Normal,
                     API = api
                 };
                 _window = Silk.NET.Windowing.Window.Create(options);
@@ -296,12 +299,11 @@ public static class HostWindow
             ConfigManager.SaveView(PanelManager.Panels);
         }
 
-        if (InputManager.ConsumeFullscreenToggle())
-        {
-            ConfigManager.View.Fullscreen = !ConfigManager.View.Fullscreen;
-            SetFullscreen(ConfigManager.View.Fullscreen);
-            ConfigManager.SaveView(PanelManager.Panels);
-        }
+        if (InputManager.ConsumeFullscreenToggle()) // F11
+            ToggleWindowMode(WinFullscreen);
+
+        if (InputManager.ConsumeBorderlessToggle()) // Alt+Enter
+            ToggleWindowMode(WinBorderless);
 
         _window.DoRender();
         MarkRendered();
@@ -427,6 +429,168 @@ public static class HostWindow
         InputManager.Shutdown();
     }
 
+    // 0 = Windowed, 1 = Fullscreen (exclusive), 2 = Borderless (fullscreen window).
+    public const int WinWindowed = 0, WinFullscreen = 1, WinBorderless = 2;
+
+    private static Vector2D<int> _windowedSize = new(1280, 720);
+    private static Vector2D<int> _windowedPos = new(64, 64);
+
+    // Toggle a hotkey target mode: if already in it, go back to windowed.
+    public static void ToggleWindowMode(int target)
+    {
+        var m = ConfigManager.View.WindowMode == target ? WinWindowed : target;
+        ConfigManager.View.WindowMode = m;
+        ConfigManager.View.Fullscreen = m == WinFullscreen; // keep the legacy key in sync
+        ApplyWindowMode(m);
+        ConfigManager.SaveView(PanelManager.Panels);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(nint hWnd, nint after, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint GetWindowLongPtr(nint hWnd, int index);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint SetWindowLongPtr(nint hWnd, int index, nint value);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(nint hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromWindow(nint hWnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(nint monitor, ref MONITORINFO mi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    private const int GWL_STYLE = -16, GWL_EXSTYLE = -20;
+
+    private const long WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_MINIMIZEBOX = 0x00020000,
+        WS_MAXIMIZEBOX = 0x00010000, WS_SYSMENU = 0x00080000, WS_POPUP = unchecked((long)0x80000000),
+        WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000;
+
+    private const long WS_EX_WINDOWEDGE = 0x00000100, WS_EX_CLIENTEDGE = 0x00000200,
+        WS_EX_DLGMODALFRAME = 0x00000001, WS_EX_STATICEDGE = 0x00020000;
+
+    private const uint SWP_FRAMECHANGED = 0x0020, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040,
+        SWP_NOZORDER = 0x0004;
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    private static nint Hwnd =>
+        OperatingSystem.IsWindows() && _window != null ? _window.Native?.Win32?.Hwnd ?? 0 : 0;
+
+    private static bool _borderlessActive;
+    private static nint _savedStyle, _savedExStyle;
+    private static RECT _savedRect;
+
+    private static void EnterBorderlessWin32()
+    {
+        var hwnd = Hwnd;
+        if (hwnd == 0) return;
+        if (!_borderlessActive)
+        {
+            _savedStyle = GetWindowLongPtr(hwnd, GWL_STYLE);
+            _savedExStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            GetWindowRect(hwnd, out _savedRect);
+        }
+
+        var style = (long)_savedStyle;
+        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_BORDER |
+                   WS_DLGFRAME);
+        style |= WS_POPUP;
+        var ex = (long)_savedExStyle;
+        ex &= ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME | WS_EX_STATICEDGE);
+        SetWindowLongPtr(hwnd, GWL_STYLE, (nint)style);
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, (nint)ex);
+
+        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), ref mi);
+        var r = mi.rcMonitor;
+        // 1px taller than exact: covers the monitor (so the shell hides the
+        // taskbar) without an exact match (which would trigger fullscreen
+        // optimizations and their black flip flash).
+        SetWindowPos(hwnd, 0, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top + 1,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER);
+        _borderlessActive = true;
+    }
+
+    private static void ExitBorderlessWin32()
+    {
+        var hwnd = Hwnd;
+        if (hwnd == 0 || !_borderlessActive) return;
+        SetWindowLongPtr(hwnd, GWL_STYLE, _savedStyle);
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, _savedExStyle);
+        var r = _savedRect;
+        SetWindowPos(hwnd, 0, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER);
+        _borderlessActive = false;
+    }
+
+    public static void ApplyWindowMode(int mode)
+    {
+        if (_window == null) return;
+        // Remember the windowed geometry so it can be restored on the way back.
+        if (!_borderlessActive && _window.WindowState == WindowState.Normal &&
+            _window.WindowBorder != WindowBorder.Hidden)
+        {
+            _windowedSize = _window.Size;
+            _windowedPos = _window.Position;
+        }
+
+        switch (mode)
+        {
+            case WinFullscreen:
+                if (_borderlessActive) ExitBorderlessWin32();
+                _window.WindowBorder = WindowBorder.Resizable;
+                _window.WindowState = WindowState.Fullscreen;
+                SetAutoIconify(false);
+                break;
+            case WinBorderless:
+                if (OperatingSystem.IsWindows())
+                {
+                    EnterBorderlessWin32();
+                }
+                else
+                {
+                    var mon = _window.Monitor ?? Silk.NET.Windowing.Monitor.GetMainMonitor(_window);
+                    _window.WindowState = WindowState.Normal;
+                    _window.WindowBorder = WindowBorder.Hidden;
+                    _window.Position = mon.Bounds.Origin;
+                    _window.Size = mon.Bounds.Size;
+                }
+
+                break;
+            default:
+                if (_borderlessActive)
+                {
+                    ExitBorderlessWin32();
+                    break;
+                }
+
+                _window.WindowState = WindowState.Normal;
+                _window.WindowBorder = WindowBorder.Resizable;
+                _window.Size = _windowedSize;
+                _window.Position = _windowedPos;
+                break;
+        }
+    }
+
     public static void SetFullscreen(bool on)
     {
         if (_window == null) return;
@@ -544,6 +708,10 @@ public static class HostWindow
         catch
         {
         }
+
+        // Apply the persisted window mode now the HWND exists — borderless is done
+        // through Win32 on the real handle, so it cannot be set at creation time.
+        ApplyWindowMode(ConfigManager.View.WindowMode);
 
         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
 

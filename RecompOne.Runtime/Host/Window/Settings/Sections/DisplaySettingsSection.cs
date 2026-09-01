@@ -10,18 +10,25 @@ internal sealed class DisplaySettingsSection : ISettingsSection
     public int Order => 5;
 
     private static readonly string[] Backends = ["auto", "gl45", "gl33", "gl21"];
+    private static readonly string[] WindowModes = ["Windowed", "Fullscreen", "Borderless"];
     private static readonly int[] AnisoLevels = [1, 2, 4, 8, 16];
     private static readonly string[] AnisoLabels = ["Off", "2x", "4x", "8x", "16x"];
 
     public void Draw()
     {
-        var fullscreen = ConfigManager.View.Fullscreen;
-        if (ImGui.Checkbox(Localization.T("settings.display.fullscreen"), ref fullscreen))
+        var winMode = Math.Clamp(ConfigManager.View.WindowMode, 0, 2);
+        if (ImGui.Combo("Window mode", ref winMode, WindowModes, WindowModes.Length))
         {
-            ConfigManager.View.Fullscreen = fullscreen;
-            HostWindow.SetFullscreen(fullscreen);
+            ConfigManager.View.WindowMode = winMode;
+            ConfigManager.View.Fullscreen = winMode == HostWindow.WinFullscreen; // legacy key
+            HostWindow.ApplyWindowMode(winMode);
             ConfigManager.SaveView(PanelManager.Panels);
         }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Windowed, Fullscreen (exclusive), or Borderless (a fullscreen window - "
+                             + "alt-tabs instantly and does not change display mode). F11 toggles "
+                             + "fullscreen, Alt+Enter toggles borderless.");
 
         var vsync = ConfigManager.View.VSync;
         if (ImGui.Checkbox(Localization.T("settings.display.vsync"), ref vsync))
