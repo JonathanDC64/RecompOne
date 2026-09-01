@@ -4,6 +4,7 @@ public struct HleVertex
 {
     public float X, Y;
     public float Z;
+    public float W;   // PGXP: view depth for perspective-correct interpolation (0/1 = affine)
     public byte R, G, B;
     public float U, V;
     public bool HasGteZ;

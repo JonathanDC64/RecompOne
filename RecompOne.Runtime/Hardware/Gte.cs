@@ -283,6 +283,18 @@ public static class Gte
         SY[1] = SY[2];
         SY[2] = (short)ny;
 
+        if (Pgxp.Enabled)
+        {
+            // Precise (pre-truncation) screen coords FIFO, parallel to SX/SY.
+            // Clamped to the hardware SX/SY saturation range like DuckStation
+            // (gte.cpp RTPS): a far-offscreen vertex must stay consistent with
+            // the saturated integer the game stores, or big polys (sky quads)
+            // shrink/warp when the precise value is used.
+            PFX[0] = PFX[1]; PFX[1] = PFX[2]; PFX[2] = Math.Clamp((float)(sx / 65536.0), -1024f, 1023f);
+            PFY[0] = PFY[1]; PFY[1] = PFY[2]; PFY[2] = Math.Clamp((float)(sy / 65536.0), -1024f, 1023f);
+            PFW[0] = PFW[1]; PFW[1] = PFW[2]; PFW[2] = Math.Max((ushort)1, SZ[3]);
+        }
+
         if (last)
         {
             var dp = CheckMac0((long)div * DQA + DQB);
@@ -315,8 +327,26 @@ public static class Gte
     public static void Nclip()
     {
         FLAG = 0;
-        MAC0 = (int)CheckMac0((long)SX[0] * (SY[1] - SY[2]) + (long)SX[1] * (SY[2] - SY[0]) +
-                              (long)SX[2] * (SY[0] - SY[1]));
+        // PGXP culling correction (as in DuckStation): compute NCLIP from the
+        // precise sub-pixel coordinates. Sliver "stitch" triangles that are
+        // degenerate at integer precision (area 0 -> culled by the game) have
+        // real area precisely — without this they vanish and leave hairline gaps
+        // between corrected neighbours. Fractional results are bumped away from
+        // zero so they don't truncate back into a cull.
+        if (Pgxp.Enabled && Pgxp.CullingCorrection && PreciseSxyValid())
+        {
+            var nclip = (double)PFX[0] * PFY[1] + (double)PFX[1] * PFY[2] + (double)PFX[2] * PFY[0]
+                        - (double)PFX[0] * PFY[2] - (double)PFX[1] * PFY[0] - (double)PFX[2] * PFY[1];
+            var a = Math.Abs(nclip);
+            if (a > 0.1 && a < 1.0) nclip += nclip < 0 ? -1.0 : 1.0;
+            MAC0 = (int)nclip;
+        }
+        else
+        {
+            MAC0 = (int)CheckMac0((long)SX[0] * (SY[1] - SY[2]) + (long)SX[1] * (SY[2] - SY[0]) +
+                                  (long)SX[2] * (SY[0] - SY[1]));
+        }
+
         EndFlag();
     }
 
@@ -477,8 +507,11 @@ public static class Gte
         EndFlag();
     }
 
+    public static readonly int[] DbgOp = new int[64];
+
     public static void Execute(uint cmd)
     {
+        DbgOp[cmd & 0x3F]++;
         FLAG = 0;
         var sf = (cmd & (1u << 19)) != 0 ? 12 : 0;
         var lm = (cmd & (1u << 10)) != 0;
@@ -642,10 +675,10 @@ public static class Gte
             case 9: return (uint)IR1;
             case 10: return (uint)IR2;
             case 11: return (uint)IR3;
-            case 12: return (uint)((ushort)SX[0] | (SY[0] << 16));
-            case 13: return (uint)((ushort)SX[1] | (SY[1] << 16));
+            case 12: return SxyRead(0);
+            case 13: return SxyRead(1);
             case 14:
-            case 15: return (uint)((ushort)SX[2] | (SY[2] << 16));
+            case 15: return SxyRead(2);
             case 16: return SZ[0];
             case 17: return SZ[1];
             case 18: return SZ[2];
@@ -704,14 +737,20 @@ public static class Gte
             case 12:
                 SX[0] = (short)val;
                 SY[0] = (short)(val >> 16);
+                PFX[0] = SX[0];
+                PFY[0] = SY[0];
                 break;
             case 13:
                 SX[1] = (short)val;
                 SY[1] = (short)(val >> 16);
+                PFX[1] = SX[1];
+                PFY[1] = SY[1];
                 break;
             case 14:
                 SX[2] = (short)val;
                 SY[2] = (short)(val >> 16);
+                PFX[2] = SX[2];
+                PFY[2] = SY[2];
                 break;
             case 15:
                 SX[0] = SX[1];
@@ -720,6 +759,12 @@ public static class Gte
                 SY[1] = SY[2];
                 SX[2] = (short)val;
                 SY[2] = (short)(val >> 16);
+                PFX[0] = PFX[1];
+                PFY[0] = PFY[1];
+                PFX[1] = PFX[2];
+                PFY[1] = PFY[2];
+                PFX[2] = SX[2];
+                PFY[2] = SY[2];
                 break;
             case 16: SZ[0] = (ushort)val; break;
             case 17: SZ[1] = (ushort)val; break;
@@ -878,6 +923,45 @@ public static class Gte
     public static uint StoreWord(int reg)
     {
         return Read(reg);
+    }
+
+    // PGXP: precise (float) screen-coord FIFO parallel to SX/SY/SZ, filled by Rtp.
+    private static readonly float[] PFX = new float[3], PFY = new float[3], PFW = new float[3];
+
+    public static void GetPrecise(int slot, out float x, out float y, out float w)
+    {
+        x = PFX[slot];
+        y = PFY[slot];
+        w = PFW[slot];
+    }
+
+    // The precise FIFO mirrors SX/SY only while the game leaves the registers as
+    // the GTE wrote them; if it stuffed SXY via MTC2/CTC2 the floats are stale.
+    private static bool PreciseSxyValid()
+    {
+        for (var i = 0; i < 3; i++)
+            if (Math.Abs(PFX[i] - SX[i]) > 1.5f || Math.Abs(PFY[i] - SY[i]) > 1.5f)
+                return false;
+        return true;
+    }
+
+    public static uint PackedSxy(int slot)
+    {
+        return (uint)((ushort)SX[slot] | (SY[slot] << 16));
+    }
+
+    public static void SetPrecise(int slot, float x, float y, float w)
+    {
+        PFX[slot] = x;
+        PFY[slot] = y;
+        PFW[slot] = w;
+    }
+
+    private static uint SxyRead(int slot)
+    {
+        var packed = (uint)((ushort)SX[slot] | (SY[slot] << 16));
+        if (Pgxp.Enabled) Pgxp.StashPending(packed, PFX[slot], PFY[slot], PFW[slot]);
+        return packed;
     }
 
     public static bool GetCondition()

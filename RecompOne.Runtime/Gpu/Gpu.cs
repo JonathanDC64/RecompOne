@@ -32,6 +32,13 @@ public sealed partial class Gpu
     private int _dmaDir;
 
     private readonly uint[] _fifo = new uint[1024];
+
+    // PGXP: RAM source address of the matching _fifo word (0 = unknown/not from
+    // DMA). Set by the GPU DMA before each WriteGp0 so vertex words can be traced
+    // back to memory. Entries past _fifoCount are never read, so it needs no
+    // clearing when the fifo resets.
+    public static uint NextSrcAddr;
+    private readonly uint[] _fifoSrc = new uint[1024];
     private int _fifoCount;
     private int _need;
     private bool _polyline;
@@ -120,7 +127,9 @@ public sealed partial class Gpu
 
     private void Push(uint word)
     {
-        if (_fifoCount < _fifo.Length) _fifo[_fifoCount++] = word;
+        if (_fifoCount >= _fifo.Length) return;
+        _fifoSrc[_fifoCount] = NextSrcAddr;
+        _fifo[_fifoCount++] = word;
     }
 
     public void WriteGp0Packet(ReadOnlySpan<uint> words)
@@ -141,6 +150,9 @@ public sealed partial class Gpu
         }
 
         words.CopyTo(_fifo);
+        // No per-word provenance on the bulk path: mark unknown so PGXP uses the
+        // value-keyed weld instead of trusting a stale address.
+        Array.Clear(_fifoSrc, 0, words.Length);
         _fifoCount = words.Length;
         Execute();
         if (!_loadImage) _fifoCount = 0;

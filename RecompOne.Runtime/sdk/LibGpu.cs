@@ -30,11 +30,28 @@ public static class LibGpu
 
             if (count > 0)
             {
-                if (m is PSMemory ram && ram.TryWords(addr + 4u, count, out var words))
+                // The bulk path carries no per-word RAM address, and KF2 draws almost
+                // everything through these ordering tables — so while PGXP is on take
+                // the per-word path and record each word's provenance.
+                if (Pgxp.Enabled)
+                {
+                    for (var i = 0; i < count; i++)
+                    {
+                        Gpu.NextSrcAddr = (addr + 4u + (uint)i * 4u) & 0x1FFFFCu;
+                        gpu.WriteGp0(m.ReadU32(addr + 4u + (uint)i * 4u));
+                    }
+
+                    Gpu.NextSrcAddr = 0;
+                }
+                else if (m is PSMemory ram && ram.TryWords(addr + 4u, count, out var words))
+                {
                     gpu.WriteGp0Packet(words);
+                }
                 else
+                {
                     for (var i = 0; i < count; i++)
                         gpu.WriteGp0(m.ReadU32(addr + 4u + (uint)i * 4u));
+                }
             }
 
             var next = header & 0xFFFFFFu;
@@ -168,6 +185,11 @@ public static class LibGpu
         gpu.WriteGp1(mode);
 
         GpuHle.NotifyDisplay(dispX, dispY, dispW, dispH);
+        // Ensure the display is enabled. The game's SetDispMask(1) (GP1 0x03) does
+        // not reach the GPU under recompilation; setting up a display env means the
+        // game wants output visible, so enable it here. Without this the screen
+        // stays black no matter how many frames decode.
+        gpu.WriteGp1(0x03000000u);
 
         if (Event.HasAnyListeners<DispEnvEvent>())
         {

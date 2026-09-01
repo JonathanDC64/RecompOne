@@ -8,6 +8,9 @@ public sealed partial class Gpu
     private struct Vert
     {
         public int X, Y, R, G, B, U, V;
+        public uint Word;        // raw vertex word as parsed (PGXP weld lookups)
+        public float PX, PY, PW; // PGXP precise coords (valid when Precise)
+        public bool Precise;
     }
 
     private static readonly RenderPrimEvent _primEvent = new();
@@ -49,9 +52,18 @@ public sealed partial class Gpu
             v[i].G = cg;
             v[i].B = cb;
 
+            var srcAddr = idx < _fifoSrc.Length ? _fifoSrc[idx] : 0u;
             var vw = _fifo[idx++];
+            v[i].Word = vw;
             v[i].X = _drawOffsetX + CoordX(vw);
             v[i].Y = _drawOffsetY + CoordY(vw);
+            if (Pgxp.Lookup(srcAddr, vw, out var px, out var py, out var pw))
+            {
+                v[i].PX = _drawOffsetX + px;
+                v[i].PY = _drawOffsetY + py;
+                v[i].PW = pw;
+                v[i].Precise = true;
+            }
 
             if (tex)
             {
@@ -94,6 +106,49 @@ public sealed partial class Gpu
                 v[i].X = e.X[i];
                 v[i].Y = e.Y[i];
             }
+        }
+
+        // PGXP is applied PER-VERTEX, unconditionally (like DuckStation): a vertex
+        // resolves the same way in every polygon that references it, so shared
+        // edges always agree — gating correction per-polygon made a shared corner
+        // precise in one poly and integer in its neighbour, which IS a crack.
+        // Unresolved vertices in a partly-resolved polygon get a consistent
+        // value-keyed weld where possible. (Perspective W still falls back to
+        // affine per-triangle unless every vertex is resolved — see HleTri.)
+        if (Pgxp.Enabled)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                if (v[i].Precise) continue;
+                if (Pgxp.WeldLookup(v[i].Word, out float wx, out float wy, out float ww))
+                {
+                    v[i].PX = _drawOffsetX + wx;
+                    v[i].PY = _drawOffsetY + wy;
+                    v[i].PW = ww;
+                    v[i].Precise = true;
+                }
+            }
+        }
+
+        // DEBUG (env KF2_FLAT=1): force flat bright color, ignore texture — reveals
+        // that the world walls ARE drawn+projected but texture black (texture/VRAM bug).
+        if (System.Environment.GetEnvironmentVariable("KF2_FLAT") == "1")
+        {
+            for (int i = 0; i < 4; i++) { v[i].R = 200; v[i].G = 60; v[i].B = 200; }
+            tex = false;
+        }
+
+        if (DbgUp.On)
+        {
+            int loX = v[0].X, hiX = v[0].X, loY = v[0].Y, hiY = v[0].Y;
+            for (int i = 1; i < n; i++)
+            {
+                loX = Math.Min(loX, v[i].X); hiX = Math.Max(hiX, v[i].X);
+                loY = Math.Min(loY, v[i].Y); hiY = Math.Max(hiY, v[i].Y);
+            }
+            DbgUp.PolyBounds(loX, loY, hiX, hiY);
+            int sx = hiX - loX, sy = hiY - loY;
+            if (tex && sx >= 24 && sy >= 24) DbgUp.Poly(_texPageX, _texPageY, _texDepth, clut, _texWinMaskX, _texWinMaskY, _texWinOffX, _texWinOffY);
         }
 
         if (HleOn)
