@@ -53,6 +53,20 @@ public static class Pgxp
     // load + branch when off). Kept in sync by the Enabled/CpuMode setters.
     public static bool CpuOn = _enabled && _cpuMode;
 
+    // Push the persisted settings into the runtime flags. Called at startup
+    // (Enabled gates the GTE precise FIFO from the first frame) and whenever the
+    // Display settings change. The KF2_PGXP env var still forces it on for
+    // headless runs, so it is OR-ed rather than overwritten.
+    public static void ApplyFromConfig()
+    {
+        var v = Config.ConfigManager.View;
+        CpuMode = v.PgxpCpuMode;
+        PerspectiveTextures = v.PgxpPerspectiveTextures;
+        PerspectiveColors = v.PgxpPerspectiveColors;
+        CullingCorrection = v.PgxpCullingCorrection;
+        Enabled = v.PgxpGeometryCorrection || Environment.GetEnvironmentVariable("KF2_PGXP") == "1";
+    }
+
     public static bool ValueFallback { get; set; } =
         Environment.GetEnvironmentVariable("KF2_PGXP_VC") == "1";
     // Sub-options (DuckStation parity): perspective-correct interpolation of

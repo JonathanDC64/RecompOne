@@ -12,6 +12,11 @@ public sealed class GlCore : IGpuBackend
         public float R, G, B;
         public float Clut, Texpage;
         public float U, V;
+
+        // PGXP view depth. 1 means "no precise data" and reproduces the PS1's
+        // affine mapping exactly, so untouched prims (2D rects, sprites, UI, and
+        // any triangle not fully resolved) behave as before.
+        public float W;
     }
 
     private const int MaxVerts = 0x40000;
@@ -24,6 +29,7 @@ public sealed class GlCore : IGpuBackend
     private long _frame;
 
     private uint _vao, _vbo, _presentVao, _presentVbo, _progPrim, _progPresent, _progPresent24;
+    private int _uPctTex, _uPctCol;
     private uint _presentFbo, _presentTex;
     private int _presentW, _presentH;
     private bool _presentNearest;
@@ -100,6 +106,8 @@ public sealed class GlCore : IGpuBackend
         _uFbInv = _gl.GetUniformLocation(_progPrim, "uFbInv");
         _uRepRect = _gl.GetUniformLocation(_progPrim, "uRepRect");
         _uRepClutCount = _gl.GetUniformLocation(_progPrim, "uRepClutCount");
+        _uPctTex = _gl.GetUniformLocation(_progPrim, "uPctTex");
+        _uPctCol = _gl.GetUniformLocation(_progPrim, "uPctCol");
 
         _gl.UseProgram(_progPrim);
         _gl.Uniform1(_gl.GetUniformLocation(_progPrim, "uVram"), 0);
@@ -141,6 +149,8 @@ public sealed class GlCore : IGpuBackend
         _gl.VertexAttribPointer(3, 1, VertexAttribPointerType.Float, false, stride, (void*)24);
         _gl.EnableVertexAttribArray(4);
         _gl.VertexAttribPointer(4, 2, VertexAttribPointerType.Float, false, stride, (void*)28);
+        _gl.EnableVertexAttribArray(5);
+        _gl.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, (void*)36);
 
         // fullscreen quad for present, real vbo since gl_VertexID without arrays does not draw on mesa for some reason?? or i did it wrong?
         _presentVao = _gl.GenVertexArray();
@@ -544,7 +554,10 @@ public sealed class GlCore : IGpuBackend
             R = cr, G = cg, B = cb,
             Clut = f.Clut & 0x7FFF,
             Texpage = tpage,
-            U = v.U, V = v.V
+            U = v.U, V = v.V,
+            // Guard: anything that did not come from a PGXP-resolved triangle
+            // leaves W at 0, which would collapse the vertex. 1 = affine.
+            W = v.W > 0f ? v.W : 1f
         };
     }
 
@@ -830,6 +843,13 @@ public sealed class GlCore : IGpuBackend
         }
 
         _gl.ActiveTexture(TextureUnit.Texture0);
+
+        // PGXP interpolation mode. Both are no-ops for prims whose W is 1, so the
+        // 2D/UI path is untouched either way.
+        var view = Config.ConfigManager.View;
+        _gl.Uniform1(_uPctTex, view.PgxpGeometryCorrection && view.PgxpPerspectiveTextures ? 1 : 0);
+        _gl.Uniform1(_uPctCol, view.PgxpGeometryCorrection && view.PgxpPerspectiveColors ? 1 : 0);
+
         if (rt != null)
         {
             _gl.Uniform2(_uPosBias, (float)(rt.Margin - rt.X), (float)-rt.Y);

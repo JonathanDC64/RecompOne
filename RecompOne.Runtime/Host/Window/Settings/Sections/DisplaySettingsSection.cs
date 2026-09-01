@@ -52,6 +52,74 @@ internal sealed class DisplaySettingsSection : ISettingsSection
 
         ImGui.Separator();
 
+        // PGXP (geometry correction). Sub-options only matter while it is on, so
+        // they are indented under it. Plain labels: there are no localisation
+        // entries for these keys yet and T() would echo the key back.
+        var pgxp = ConfigManager.View.PgxpGeometryCorrection;
+        if (ImGui.Checkbox("PGXP geometry correction", ref pgxp))
+        {
+            ConfigManager.View.PgxpGeometryCorrection = pgxp;
+            Pgxp.ApplyFromConfig();
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Uses the GTE's pre-truncation coordinates to remove polygon\n" +
+                             "wobble and correct perspective. Experimental.");
+
+        if (pgxp)
+        {
+            ImGui.Indent();
+
+            var cpuMode = ConfigManager.View.PgxpCpuMode;
+            if (ImGui.Checkbox("CPU mode", ref cpuMode))
+            {
+                ConfigManager.View.PgxpCpuMode = cpuMode;
+                Pgxp.ApplyFromConfig();
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Propagates precision through CPU arithmetic, for games that\n" +
+                                 "repack vertex words. Costs some performance.");
+
+            var pctTex = ConfigManager.View.PgxpPerspectiveTextures;
+            if (ImGui.Checkbox("Perspective-correct textures", ref pctTex))
+            {
+                ConfigManager.View.PgxpPerspectiveTextures = pctTex;
+                Pgxp.ApplyFromConfig();
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+
+            var pctCol = ConfigManager.View.PgxpPerspectiveColors;
+            if (ImGui.Checkbox("Perspective-correct colours", ref pctCol))
+            {
+                ConfigManager.View.PgxpPerspectiveColors = pctCol;
+                Pgxp.ApplyFromConfig();
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Off by default: games often tune gouraud fog/lighting to the\n" +
+                                 "console's affine interpolation.");
+
+            var cull = ConfigManager.View.PgxpCullingCorrection;
+            if (ImGui.Checkbox("Culling correction", ref cull))
+            {
+                ConfigManager.View.PgxpCullingCorrection = cull;
+                Pgxp.ApplyFromConfig();
+                ConfigManager.SaveView(PanelManager.Panels);
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Computes NCLIP from precise coordinates so sliver triangles\n" +
+                                 "are not culled into hairline gaps.");
+
+            ImGui.Unindent();
+        }
+
+        ImGui.Separator();
+
         var index = Array.IndexOf(Backends, ConfigManager.View.GpuBackend);
         if (index < 0) index = 0;
         if (ImGui.Combo(Localization.T("settings.display.backend"), ref index, Backends, Backends.Length))

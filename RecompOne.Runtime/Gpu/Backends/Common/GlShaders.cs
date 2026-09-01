@@ -63,9 +63,12 @@ internal static class GlShaders
                                  layout(location = 2) in float inClutF;
                                  layout(location = 3) in float inTexpageF;
                                  layout(location = 4) in vec2  inUV;
+                                 layout(location = 5) in float inW;
 
-                                 out vec4 vColor;
-                                 out vec2 vUV;
+                                 out vec4 vColorP;
+                                 out vec2 vUVP;
+                                 noperspective out vec4 vColorA;
+                                 noperspective out vec2 vUVA;
                                  flat out ivec2 clutBase;
                                  flat out ivec2 pageBase;
                                  flat out int   texMode;
@@ -78,12 +81,16 @@ internal static class GlShaders
 
                                  void main() {
                                      vec2 p = (inPos + uVertexOffset + uPosBias) * uFbInv - 1.0;
-                                     gl_Position = vec4(p, 0.0, 1.0);
+                                     // PGXP: scaling clip coords by W makes the hardware interpolate the
+                                     // smooth varyings perspective-correctly. W == 1 reproduces the PS1's
+                                     // affine mapping exactly, so this is a no-op when PGXP is off.
+                                     gl_Position = vec4(p * inW, 0.0, inW);
 
                                      int inClut = int(inClutF + 0.5);
                                      int inTexpage = int(inTexpageF + 0.5);
 
-                                     vColor = vec4(inColorF, 0.0) / 255.0;
+                                     vColorP = vec4(inColorF, 0.0) / 255.0;
+                                     vColorA = vColorP;
                                      vDither = (inTexpage >> 10) & 1;
                                      vRepClut = (inTexpage >> 12) & 1;
 
@@ -91,13 +98,16 @@ internal static class GlShaders
                                          texMode = 4;
                                      } else if ((inTexpage & 0x4000) != 0) {
                                          texMode = 5;
-                                         vUV = inUV;
+                                         vUVP = inUV;
+                                         vUVA = inUV;
                                      } else if ((inTexpage & 0x2000) != 0) {
                                          texMode = 6;
-                                         vUV = inUV;
+                                         vUVP = inUV;
+                                         vUVA = inUV;
                                      } else {
                                          texMode = (inTexpage >> 7) & 3;
-                                         vUV = inUV;
+                                         vUVP = inUV;
+                                         vUVA = inUV;
                                          pageBase = ivec2((inTexpage & 0xf) * 64, ((inTexpage >> 4) & 1) * 256);
                                          clutBase = ivec2((inClut & 0x3f) * 16, (inClut >> 6) & 0x1ff);
                                      }
@@ -106,8 +116,10 @@ internal static class GlShaders
 
     public const string PrimFs = """
                                  #version 330 core
-                                 in vec4 vColor;
-                                 in vec2 vUV;
+                                 in vec4 vColorP;
+                                 noperspective in vec4 vColorA;
+                                 in vec2 vUVP;
+                                 noperspective in vec2 vUVA;
                                  flat in ivec2 clutBase;
                                  flat in ivec2 pageBase;
                                  flat in int   texMode;
@@ -131,6 +143,8 @@ internal static class GlShaders
                                  uniform int   uCheckMask;
                                  uniform int   uScale;
                                  uniform vec2  uPosBias;
+                                 uniform int   uPctTex; // 1 = perspective-correct texture coords (PGXP)
+                                 uniform int   uPctCol; // 1 = perspective-correct vertex colours
 
                                  const int ditherTbl[16] = int[16](
                                      -4,  0, -3,  1,
@@ -153,6 +167,10 @@ internal static class GlShaders
                                  }
 
                                  void main() {
+                                     // Pick perspective-correct or affine interpolation per PGXP setting.
+                                     // Named so every use site below is untouched.
+                                     vec4 vColor = (uPctCol != 0) ? vColorP : vColorA;
+                                     vec2 vUV    = (uPctTex != 0) ? vUVP    : vUVA;
                                      if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
 
                                      if (texMode == 4) {

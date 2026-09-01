@@ -87,6 +87,9 @@ public static class Runtime
         }
 
         LoadMemoryCards();
+        // Before the game runs: Pgxp.Enabled gates the GTE precise-coordinate
+        // FIFO, so it has to be live from the first frame.
+        Pgxp.ApplyFromConfig();
         Audio.SetMasterVolume(Config.ConfigManager.Game.Muted ? 0f : Config.ConfigManager.Game.MasterVolume);
         if (Event.HasAnyListeners<RuntimeReadyEvent>()) Event.Dispatch(new RuntimeReadyEvent());
     }
