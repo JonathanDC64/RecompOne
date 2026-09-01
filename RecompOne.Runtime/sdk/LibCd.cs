@@ -6,6 +6,10 @@ namespace RecompOne.Runtime.Sdk;
 
 public static class LibCd
 {
+    // Debug counters for the CD sync/ready poll paths (very hot; printed only
+    // every N-hundred-thousand calls where referenced).
+    private static long _dbgSync, _dbgReady, _dbgRSync;
+
     private const byte Nop = 0x01,
         Setloc = 0x02,
         Play = 0x03,
@@ -124,7 +128,7 @@ public static class LibCd
         var result = c.A1;
         PumpSync();
         PumpReady(1);
-        if (_readActive && _cbReady == 0 && _cbData == 0) _lastIntr = DataReady;
+        if (_readActive) _lastIntr = DataReady;
         if (result != 0) WriteResult(m, result);
         c.V0 = (uint)_lastIntr;
     }
@@ -560,6 +564,7 @@ public static class LibCd
 
     public static void CdReadSync(CpuContext c, IMemory m)
     {
+        if (++_dbgRSync % 300000 == 0) Console.WriteLine($"[dbg] CdReadSync x{_dbgRSync} mode={c.A0}");
         if (c.A1 != 0) WriteResult(m, c.A1);
         c.V0 = _lastIntr == DiskError ? 0xFFFFFFFFu : 0u;
     }
@@ -580,7 +585,10 @@ public static class LibCd
         for (var j = 0; j < bytes; j++) m.WriteU8(madr + (uint)j, data[j]);
 
         _cdDataPending = true;
-        if (_readActive && _cbReady == 0 && _cbData == 0)
+        // Sequential ReadN retrieval: advance so the next CdGetSector in the game's
+        // copy loop reads the FOLLOWING sector. Not gated on callbacks — KF2
+        // registers them and still drives retrieval synchronously through here.
+        if (_readActive)
         {
             AdvancePos(1);
             Dispatcher.LoadByLba(CurrentLba);
@@ -592,6 +600,26 @@ public static class LibCd
     public static void CdDataSync(CpuContext c, IMemory m)
     {
         c.V0 = 0;
+    }
+
+    private static long _dbgChk;
+
+    // Diagnostic passthrough for GAME's room checksum (sum(words)+0x12345678 ==
+    // last word). KF2's loader calls this to validate a streamed room; running it
+    // natively lets us log mismatches instead of silently failing the load.
+    public static void ChecksumProbe(CpuContext c, IMemory m)
+    {
+        var buf = c.A0;
+        var count = (int)c.A1;
+        var words = count << 9;
+        var sum = 0x12345678u;
+        for (var i = 0; i < words - 1; i++) sum += m.ReadU32(buf + (uint)(i * 4));
+        var stored = m.ReadU32(buf + (uint)((words - 1) * 4));
+        if (_dbgChk++ < 12)
+            Console.WriteLine(
+                $"[chk] buf=0x{buf:X8} count={count} computed=0x{sum:X8} stored=0x{stored:X8} " +
+                $"{(sum == stored ? "OK" : "FAIL")}");
+        c.V0 = (uint)(sum != stored ? 1 : 0);
     }
 
     public static void CdSearchFile(CpuContext c, IMemory m)

@@ -14,6 +14,7 @@ public sealed class CdController
     private readonly Queue<byte> _responseFifo = new();
     private readonly Queue<(byte irqType, byte[] response)> _pendingIrqs = new();
     private byte _irqFlags;
+    private byte _lastMode;
     private int _seekLba;
     private byte[] _dataBuf = new byte[2048];
 
@@ -21,6 +22,7 @@ public sealed class CdController
     private bool _dataReady;
     private bool _reading;
     private bool _streamPending;
+    private bool _sectorConsumed;
     private byte _lastIrq;
 
     private byte _mode;
@@ -34,6 +36,7 @@ public sealed class CdController
     private const int DbgMaxEvents = 256;
     private long _sectorsRead;
     private int _lastReadLba;
+    private long _dbgSetloc;
 
     public struct CdDebug
     {
@@ -280,6 +283,10 @@ public sealed class CdController
 
                 _reading = true;
                 _playing = false;
+                // fresh read: the first sector isn't consumed until the game DMAs it
+                // (otherwise the pacing below would immediately skip past it)
+                _sectorConsumed = false;
+                _streamPending = false;
                 ReadNextSector();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(1, [DriveStatus()]);
@@ -292,6 +299,7 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                Sdk.LibCdStream.OnStopStream();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
@@ -299,6 +307,7 @@ public sealed class CdController
                 _reading = false;
                 _playing = false;
                 _streamPending = false;
+                Sdk.LibCdStream.OnStopStream();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(2, [DriveStatus()]);
                 break;
@@ -391,8 +400,21 @@ public sealed class CdController
                     break;
                 }
 
+                if (Sdk.LibCdStream.InUse)
+                {
+                    // The ring library is HLE'd (StSetRing was called): the HLE stream
+                    // thread reads the disc + fills the ring/XA directly. No data INT1s.
+                    _reading = false;
+                    Sdk.LibCdStream.SetXaFilter((_mode & 0x08) != 0, _filterFile, _filterChannel);
+                    Sdk.LibCdStream.OnReadStream(_seekLba, (_mode & 0x80) != 0 ? 150.0 : 75.0);
+                    QueueIrq(3, [DriveStatus()]);
+                    break;
+                }
+
                 _reading = true;
                 _playing = false;
+                _sectorConsumed = false;
+                _streamPending = false;
                 ReadNextSector();
                 QueueIrq(3, [DriveStatus()]);
                 QueueIrq(1, [DriveStatus()]);
@@ -425,15 +447,28 @@ public sealed class CdController
             return;
         }
 
-        if (_reading && _lastIrq == 1) _streamPending = true;
+        // Continuous ReadN/ReadS: mark that the next sector may be delivered, then
+        // try immediately — AdvanceStreaming only fires if the game already consumed
+        // (DMA'd) the current sector, which handles the ack-before-DMA ordering.
+        if (_reading && _lastIrq == 1)
+        {
+            _streamPending = true;
+            AdvanceStreaming();
+            if (_irqFlags == 0 && _pendingIrqs.Count == 0) ClearInInterrupt();
+            return;
+        }
+
         ClearInInterrupt();
     }
 
     public void AdvanceStreaming()
     {
-        if (!_reading || !_streamPending) return;
+        // Never skip a sector the game hasn't consumed: pacing by real data
+        // consumption means no overwrite and no ack-runaway.
+        if (!_reading || !_streamPending || !_sectorConsumed) return;
         if (_irqFlags != 0 || _pendingIrqs.Count > 0) return;
         _streamPending = false;
+        _sectorConsumed = false;
         ReadNextSector();
         DeliverImmediate(1, [DriveStatus()]);
     }
@@ -450,6 +485,7 @@ public sealed class CdController
     private void DeliverNext()
     {
         var (irqType, response) = _pendingIrqs.Dequeue();
+        if (irqType != 1 || _dbgIrq++ < 60) Console.WriteLine($"[irq] (next) INT{irqType} resp=[{string.Join(" ", System.Array.ConvertAll(response, b => b.ToString("X2")))}]");
         _responseFifo.Clear();
         foreach (var b in response) _responseFifo.Enqueue(b);
         _irqFlags = irqType;
@@ -472,9 +508,18 @@ public sealed class CdController
 
     public void DmaReadData(IMemory m, uint addr, uint byteCount)
     {
+        Runtime.OnOverlayDma(addr); // activate a streamed code overlay if this DMA targets its base
         for (uint i = 0; i < byteCount; i++)
             m.WriteU8(addr + i, _dataFifoPos < _dataBuf.Length ? _dataBuf[_dataFifoPos++] : (byte)0);
-        if (_dataFifoPos >= _dataBuf.Length) _dataReady = false;
+        // Only consider the sector consumed (and advance the read) once its whole
+        // FIFO is drained. Streaming reads pull a sector in small chunks (e.g. STR
+        // in 32-byte DMAs); advancing after a partial read would skip most of it.
+        if (_dataFifoPos >= _dataBuf.Length)
+        {
+            _dataReady = false;
+            _sectorConsumed = true; // game read this sector
+            AdvanceStreaming();     // deliver next now if the game already acked
+        }
     }
 
     public void LoadSectorToFifo(byte[] data)
@@ -496,11 +541,32 @@ public sealed class CdController
             _m.WriteU16(BiosB.IntrEnvInInterruptAddr, 0);
     }
 
+    static long _dbgReadN;
+    static long _dbgIrq;
+
     private void ReadNextSector()
     {
         try
         {
+            // XA-ADPCM mode (Setmode bit 0x40): real-time audio sectors go to the SPU,
+            // not the data FIFO — only video/data sectors produce a data INT1. This is
+            // what STR (FMV) playback and XA music rely on. Cap the skip so a pure-audio
+            // file can't decode itself to completion inside one call.
+            if ((_mode & 0x40) != 0)
+            {
+                for (int guard = 0; guard < 64; guard++)
+                {
+                    var raw = _fs.ReadSectorData(_seekLba, 2336);
+                    if ((raw[2] & 0x04) == 0) break; // data/video sector -> deliver below
+                    bool pass = (_mode & 0x08) == 0 || (raw[0] == _filterFile && raw[1] == _filterChannel);
+                    if (pass) XaAudio.DecodeSector(raw, 8, raw[3]);
+                    _sectorsRead++;
+                    _seekLba++;
+                }
+            }
             _dataBuf = _fs.ReadSector(_seekLba);
+            _dataFifoPos = 0; // new sector replaces the data FIFO: read from the start
+            _dataReady = true; // a fresh sector is available (poll-based CdReady reads depend on this)
             DbgReadRun("read", _seekLba);
             _lastReadLba = _seekLba;
             _sectorsRead++;
@@ -518,6 +584,17 @@ public sealed class CdController
     {
         return DriveStatus();
     }
+
+    // A CD IRQ is asserted and not yet acknowledged by the game (used to pump the
+    // game's CD ISR when it's waiting without polling — e.g. seek-complete between reads).
+    public bool HasPendingIrq => _irqFlags != 0;
+
+    // A read is active and a sector sits fully unread in the FIFO while no IRQ is
+    // pending: the game acked the data INT1 (e.g. from a CdSync poll loop) before
+    // its ISR could deliver the data-ready event. On real hardware the ISR always
+    // preempts, so the event can't be lost — used by the runtime's event fallback.
+    public bool DataSittingUnconsumed =>
+        _reading && _dataReady && _dataFifoPos == 0 && _irqFlags == 0 && _pendingIrqs.Count == 0;
 
     public byte[] ReadSectorData(int lba)
     {

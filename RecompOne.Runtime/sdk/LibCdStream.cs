@@ -134,11 +134,42 @@ public static class LibCdStream
     }
 
 
-    internal static void OnReadStream(int lba)
+    private static bool _filterOn;
+    private static byte _filterFile, _filterChannel;
+
+    // XA files interleave channels: honour the game's Setfilter so only the
+    // selected file/channel is decoded (decoding every channel mangles the audio).
+    internal static void SetXaFilter(bool on, byte file, byte channel)
+    {
+        _filterOn = on;
+        _filterFile = file;
+        _filterChannel = channel;
+    }
+
+    internal static void OnReadStream(int lba, double sectorsPerSecond = -1)
     {
         if (!InUse) return;
         _pendingLba = lba;
+
+        // A ReadS is a stream (re)start: drop any previous stream position so the
+        // loop picks up the new LBA and repaces from now. Without this a second
+        // movie resumes the first one's position with a long-elapsed clock, so the
+        // pacing gate always passes (the "old intro resumes, sped-up" bug).
+        lock (_lock)
+        {
+            _streamLba = -1;
+            _ready.Clear();                       // stale frames of the old stream
+            if (_busy.Length > 0) Array.Clear(_busy); // (game hasn't consumed them)
+            _writeIdx = 0;
+            _prevStart = -1;
+            _primed = false;
+        }
+
         _reading = true;
+        // Auto-activate: some games fold StSetStream into a combined stream-start
+        // function that isn't redirected, so _active would never be set and
+        // StGetNext would refuse every frame forever (black screen, audio fine).
+        _active = true;
         EnsureThread();
         _wake.Set();
     }
@@ -278,7 +309,20 @@ public static class LibCdStream
 
                 if (!free)
                 {
-                    Thread.Sleep(1);
+                    // The real drive never stalls: if the game isn't consuming frames
+                    // (e.g. it only wants the XA audio of this stream), drop the
+                    // oldest undelivered frame and keep streaming. Stalling here
+                    // starves the interleaved audio ("jingle cut off" bug).
+                    if (_ready.Count > 0)
+                    {
+                        var (os_, on_) = _ready.Dequeue();
+                        for (var i = 0; i < on_; i++) _busy[os_ + i] = false;
+                    }
+                    else
+                    {
+                        Thread.Sleep(1); // all frames held by the game — genuinely wait
+                    }
+
                     continue;
                 }
             }

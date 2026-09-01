@@ -215,7 +215,9 @@ public static class BiosB
     private static void PadRead(IMemory m)
     {
         if (_padBuf == 0) return;
-        var s = Hardware.Controller.State;
+        // BotControl.InjectMask lets the scripted input driver (bot.txt) hold or
+        // tap buttons for automated testing; it is all-ones when idle.
+        var s = (ushort)(Hardware.Controller.State & Host.BotControl.InjectMask);
         var swapped = (ushort)((s >> 8) | (s << 8));
         var s2 = Hardware.Controller.State2;
         var swapped2 = (ushort)((s2 >> 8) | (s2 << 8));
@@ -240,7 +242,8 @@ public static class BiosB
     {
         if (!_padCardStarted) return;
 
-        var b1 = Unswap(FirePad(m, 0, Swap(Hardware.Controller.State)));
+        var b1 = Unswap(FirePad(m, 0,
+            Swap((ushort)(Hardware.Controller.State & Host.BotControl.InjectMask))));
         WritePadSlot(m, _padCardBuf1, true, b1,
             Hardware.Controller.RightX, Hardware.Controller.RightY,
             Hardware.Controller.LeftX, Hardware.Controller.LeftY, Hardware.Controller.Analog);
