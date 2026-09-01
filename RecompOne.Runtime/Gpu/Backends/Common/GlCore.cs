@@ -522,9 +522,13 @@ public sealed class GlCore : IGpuBackend
         return handle;
     }
 
+    // Single CPU-side gate for dithering: it feeds the texpage bit that both the
+    // #version 330 and the GL2.1 shaders read, so one check covers every backend.
+    private static bool DitherEnabled => Config.ConfigManager.View.Dither;
+
     private bool DitherOf(in PrimFlags f)
     {
-        return _env.Dither && (f.Gouraud || (f.Textured && !f.RawTexture));
+        return DitherEnabled && _env.Dither && (f.Gouraud || (f.Textured && !f.RawTexture));
     }
 
     private GlVertex V(in HleVertex v, in PrimFlags f, bool dither)
@@ -595,7 +599,7 @@ public sealed class GlCore : IGpuBackend
         _pendingRepTex = 0;
         _pendingRepClut = 0;
         Begin(f, 6);
-        var dith = _env.Dither;
+        var dith = DitherEnabled && _env.Dither;
         float x1 = a.X, y1 = a.Y;
         float x2 = b.X, y2 = b.Y;
         float dx = x2 - x1, dy = y2 - y1;

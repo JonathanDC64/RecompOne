@@ -50,6 +50,18 @@ internal sealed class DisplaySettingsSection : ISettingsSection
         if (scale != Hle.GlVram.Scale)
             ImGui.TextDisabled(Localization.T("settings.display.restart_pending"));
 
+        var dither = ConfigManager.View.Dither;
+        if (ImGui.Checkbox("Dithering", ref dither))
+        {
+            ConfigManager.View.Dither = dither;
+            ConfigManager.SaveView(PanelManager.Panels);
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The PS1's ordered 4x4 dither. Accurate to hardware, but at a high\n" +
+                             "internal resolution it shows as a cross-hatch on gradients that a\n" +
+                             "real composite signal would have blurred away.");
+
         ImGui.Separator();
 
         // PGXP (geometry correction). Sub-options only matter while it is on, so

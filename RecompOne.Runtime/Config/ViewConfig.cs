@@ -177,6 +177,15 @@ public class ViewConfig
         set => SetBool("PgxpCullingCorrection", value);
     }
 
+    // PS1 ordered 4x4 dithering. Hardware-accurate and on by default, but at a
+    // high internal resolution it reads as a visible cross-hatch on gradients
+    // because there is no composite blur to dissolve it.
+    public bool Dither
+    {
+        get => GetBool("Dither", true);
+        set => SetBool("Dither", value);
+    }
+
     public bool TextureFilter
     {
         get => GetBool("TextureFilter");
