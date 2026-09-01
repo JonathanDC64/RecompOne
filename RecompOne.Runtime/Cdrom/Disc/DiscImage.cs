@@ -24,7 +24,18 @@ public static class DiscImage
         var ext = Path.GetExtension(path);
         if (ext.Equals(".chd", StringComparison.OrdinalIgnoreCase)) return DiscFormat.Chd;
         if (ext.Equals(".cue", StringComparison.OrdinalIgnoreCase)) return DiscFormat.CueBin;
-        return HasChdMagic(path) ? DiscFormat.Chd : DiscFormat.Unknown;
+        if (HasChdMagic(path)) return DiscFormat.Chd;
+        // A raw track image (.bin/.img/.iso) with no cue sheet: the CueBin reader
+        // handles it as a single MODE2/2352 track, which is the standard PS1
+        // single-track layout, so users can point straight at the .bin.
+        return IsRawTrackImage(ext) ? DiscFormat.CueBin : DiscFormat.Unknown;
+    }
+
+    private static bool IsRawTrackImage(string ext)
+    {
+        return ext.Equals(".bin", StringComparison.OrdinalIgnoreCase)
+               || ext.Equals(".img", StringComparison.OrdinalIgnoreCase)
+               || ext.Equals(".iso", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasChdMagic(string path)

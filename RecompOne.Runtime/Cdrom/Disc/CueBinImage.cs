@@ -109,6 +109,17 @@ public sealed class CueBinImage : IDiscImage
 
     private void Parse(string cuePath)
     {
+        // Cue-less raw image: one MODE2/2352 data track from sector 0. Only when
+        // the extension is not .cue, so a malformed cue still reports its own
+        // parse error instead of being silently reinterpreted as raw.
+        if (!cuePath.EndsWith(".cue", StringComparison.OrdinalIgnoreCase))
+        {
+            const string rawMode = "MODE2/2352";
+            _tracks.Add(new Track(cuePath, 1, rawMode, GetSectorSize(rawMode),
+                GetDataOffset(rawMode), 0, 0));
+            return;
+        }
+
         var dir = Path.GetDirectoryName(Path.GetFullPath(cuePath)) ?? "";
         string? currentFile = null;
         var trackNum = 0;
