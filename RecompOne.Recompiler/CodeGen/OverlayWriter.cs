@@ -19,7 +19,9 @@ public static class OverlayWriter
         int LbaStart,
         uint Base,
         uint Size,
-        MipsInstruction[] Instructions);
+        MipsInstruction[] Instructions,
+        uint Sig0,
+        uint Sig1);
 
     public static void Write(RecompOneConfig config, DiscFs fs, string outDir)
     {
@@ -41,8 +43,12 @@ public static class OverlayWriter
         {
             var analysis = AnalyzeOverlay(config, overlayConfig, fs);
             if (analysis == null) continue;
+            // First two words of the overlay image identify it at runtime when
+            // several overlays share a load base (streamed per-map code).
+            var sig0 = analysis.DiscBin.Length >= 4 ? BitConverter.ToUInt32(analysis.DiscBin, 0) : 0u;
+            var sig1 = analysis.DiscBin.Length >= 8 ? BitConverter.ToUInt32(analysis.DiscBin, 4) : 0u;
             overlayResults.Add(new OverlayResult(overlayConfig.Name, analysis.Functions, analysis.Lba,
-                analysis.Base, (uint)analysis.DiscBin.Length, analysis.Instructions));
+                analysis.Base, (uint)analysis.DiscBin.Length, analysis.Instructions, sig0, sig1));
         }
 
         var images = overlayResults.Select(r => new ImageFunctions(r.Name, r.Functions, r.Instructions)).ToList();
@@ -130,7 +136,7 @@ public static class OverlayWriter
             new PipelineOptions(config.Functions, config.LinearSweep, config.PointerScan, config.Stubs,
                 config.Ignored));
 
-        return new OverlayResult("main", funcs, -1, 0, 0, instrs);
+        return new OverlayResult("main", funcs, -1, 0, 0, instrs, 0, 0);
     }
 
     public sealed record OverlayAnalysis(
@@ -266,7 +272,7 @@ public static class OverlayWriter
             Console.WriteLine($"[Recompiler] emiting {result.Name}.cs ({result.Functions.Count} functions)");
             EmitOverlayFile(result.Name, result.Functions, className, knownFuncs, config.Debug, config.AddressComments,
                 config.DisasmComments, result.LbaStart, result.Base, result.Size, result.Instructions, outDir,
-                SymbolRelocator.Plan(result.Functions, config.Relocations, result.Name));
+                SymbolRelocator.Plan(result.Functions, config.Relocations, result.Name), result.Sig0, result.Sig1);
         }
 
         Console.WriteLine("[Recompiler] Emitting Entry.cs");
@@ -279,7 +285,8 @@ public static class OverlayWriter
 
     private static void EmitOverlayFile(string overlayName, List<MipsFunction> funcs, string className,
         Dictionary<uint, string> knownFuncs, bool debug, bool addressComments, bool disasmComments, int lbaStart,
-        uint ovlBase, uint ovlSize, MipsInstruction[] instrs, string outDir, Dictionary<uint, uint> relocations)
+        uint ovlBase, uint ovlSize, MipsInstruction[] instrs, string outDir, Dictionary<uint, uint> relocations,
+        uint sig0, uint sig1)
     {
         var sb = new StringBuilder();
         sb.AppendLine("using RecompOne.Runtime.Context;");
@@ -321,6 +328,8 @@ public static class OverlayWriter
         sb.AppendLine($"    public int LbaStart => {lbaStart};");
         sb.AppendLine($"    public uint Base => 0x{ovlBase:X8}u;");
         sb.AppendLine($"    public uint Size => 0x{ovlSize:X}u;");
+        sb.AppendLine($"    public uint Sig0 => 0x{sig0:X8}u;");
+        sb.AppendLine($"    public uint Sig1 => 0x{sig1:X8}u;");
         sb.AppendLine("    public IReadOnlyDictionary<uint, Action<CpuContext, IMemory>> Functions { get; } =");
         sb.AppendLine("        new Dictionary<uint, Action<CpuContext, IMemory>>");
         sb.AppendLine("        {");

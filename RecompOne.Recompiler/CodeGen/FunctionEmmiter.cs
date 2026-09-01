@@ -132,8 +132,10 @@ public static class FunctionEmitter
         if (instrs.Length >= 2 && instrs[idx - 1].HasDelaySlot) idx--;
 
         var ctrl = instrs[idx];
-        if (ctrl.IsReturn || ctrl.IsJump || ctrl.IsRegisterJump || ctrl.IsUnconditionalBranch) return false;
-        if (ctrl.IsFunctionCall) return false;
+        if (ctrl.IsReturn || ctrl.IsJump || ctrl.IsUnconditionalBranch) return false;
+        // jr = tail-jump/return (no fall-through); jalr = a CALL (links $ra), which
+        // returns to pc+8 and continues into the next symbol. KF2 relies on this.
+        if (ctrl.IsRegisterJump && !ctrl.IsFunctionCall) return false;
         return true;
     }
 }
