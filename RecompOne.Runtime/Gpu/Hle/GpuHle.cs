@@ -12,6 +12,19 @@ public static class GpuHle
     public static int LastDisplayW { get; set; }
     public static int LastDisplayH { get; set; }
     public static float TargetAspect { get; set; } = 4f / 3f;
+
+    // Radial distance fog. The game's depth cue fades by forward-Z, which barely
+    // touches geometry beside the camera, so a wide view shows its radial cull
+    // boundary. These let a game project ask for the same fade computed radially.
+    // Needs PGXP: the view depth reaches the shader as the PGXP W value.
+    public static bool RadialFog { get; set; }
+    public static float RadialFogNear { get; set; } = 20000f;
+    public static float RadialFogFar { get; set; } = 24000f;
+    public static float ProjH { get; set; } = 200f;
+    public static float ProjCentreX { get; set; } = 160f;
+    public static float RadialFogR { get; set; } = 5f;
+    public static float RadialFogG { get; set; } = 5f;
+    public static float RadialFogB { get; set; } = 5f;
     public const float BaseAspect = 4f / 3f;
 
     public struct DispRect

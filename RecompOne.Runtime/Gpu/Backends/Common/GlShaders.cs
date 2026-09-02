@@ -70,6 +70,7 @@ internal static class GlShaders
                                  out vec2 vUVP;
                                  noperspective out vec4 vColorA;
                                  noperspective out vec2 vUVA;
+                                 out float vViewZ; // PGXP view depth, for radial fog
                                  flat out ivec2 clutBase;
                                  flat out ivec2 pageBase;
                                  flat out int   texMode;
@@ -89,6 +90,7 @@ internal static class GlShaders
                                      // affine mapping exactly, so this is a no-op when PGXP is off.
                                      gl_Position = vec4(p * inW, 0.0, inW);
                                      vPersp = (inW != 1.0) ? 1 : 0;
+                                     vViewZ = inW;
                                      uvLimits = ivec4(inUvLimits + 0.5);
 
                                      int inClut = int(inClutF + 0.5);
@@ -125,6 +127,7 @@ internal static class GlShaders
                                  noperspective in vec4 vColorA;
                                  in vec2 vUVP;
                                  noperspective in vec2 vUVA;
+                                 in float vViewZ;
                                  flat in ivec2 clutBase;
                                  flat in ivec2 pageBase;
                                  flat in int   texMode;
@@ -155,6 +158,12 @@ internal static class GlShaders
                                  uniform int   uFilter;       // 3D world polygons: 0 = nearest, 1 = bilinear
                                  uniform int   uFilterSprite; // 2D rects/sprites/UI: 0 = nearest, 1 = bilinear
                                  uniform int   uAniso;        // world polys: 1 = off, else 2/4/8/16 taps
+                                 uniform int   uRadFog;       // 1 = fog by RADIAL distance, not just forward-Z
+                                 uniform float uRadFogNear;   // view-Z units, the game's own fog near
+                                 uniform float uRadFogFar;    // ... and far
+                                 uniform float uRadFogH;      // GTE projection H, to turn pixel offset into an angle
+                                 uniform float uRadFogCx;     // projection centre X, in the game's own pixel space
+                                 uniform vec3  uRadFogColor;  // 0..255, the game's FarColor
 
                                  const int ditherTbl[16] = int[16](
                                      -4,  0, -3,  1,
@@ -221,6 +230,21 @@ internal static class GlShaders
                                                  (t00.a * w00 + t10.a * w10 + t01.a * w01 + t11.a * w11) / ow);
                                  }
 
+                                 // Fade toward the fog colour by RADIAL distance
+                                 // (viewZ * sec(horizontal angle)), so the cull
+                                 // boundary is fogged at the screen edges too - the
+                                 // depth cue alone barely touches them. A no-op when
+                                 // PGXP left vViewZ at 1.
+                                 ivec3 radFog(ivec3 c8) {
+                                     if (uRadFog == 0 || vPersp == 0 || vViewZ <= 1.0) return c8;
+                                     float gx = gl_FragCoord.x / float(uScale) - uPosBias.x;
+                                     float dx = (gx - uRadFogCx) / max(uRadFogH, 1.0);
+                                     float radial = vViewZ * sqrt(1.0 + dx * dx);
+                                     float t = clamp((radial - uRadFogNear)
+                                                     / max(uRadFogFar - uRadFogNear, 1.0), 0.0, 1.0);
+                                     return ivec3(mix(vec3(c8), uRadFogColor, t) + 0.5);
+                                 }
+
                                  vec3 quant5(ivec3 c8) {
                                      if (vDither != 0) {
                                          ivec2 vp = ivec2(floor(gl_FragCoord.xy / float(uScale) - uPosBias));
@@ -237,7 +261,7 @@ internal static class GlShaders
                                      if (uCheckMask != 0 && texelFetch(uDest, ivec2(gl_FragCoord.xy), 0).a >= 0.5) discard;
 
                                      if (texMode == 4) {
-                                         FragColor = vec4(quant5(ivec3(vColor.rgb * 255.0 + 0.5)), uSetMask);
+                                         FragColor = vec4(quant5(radFog(ivec3(vColor.rgb * 255.0 + 0.5))), uSetMask);
                                          BlendColor = uBlend;
                                          return;
                                      }
@@ -320,7 +344,7 @@ internal static class GlShaders
                                      if (texel.rgb == vec3(0.0) && texel.a < 0.5) discard;
                                      ivec3 t8 = ivec3(texel.rgb * 31.0 + 0.5) << 3;
                                      ivec3 c8 = (t8 * ivec3(vColor.rgb * 255.0 + 0.5)) >> 7;
-                                     FragColor = vec4(quant5(c8), max(texel.a, uSetMask));
+                                     FragColor = vec4(quant5(radFog(c8)), max(texel.a, uSetMask));
                                      BlendColor = texel.a >= 0.5 ? uBlend : uBlendOpaque;
                                  }
                                  """;

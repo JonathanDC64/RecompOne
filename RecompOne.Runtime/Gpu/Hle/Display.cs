@@ -20,6 +20,27 @@ public static class Display
         set => GpuHle.TargetAspect = value > 0f ? value : 16f / 9f;
     }
 
+    public static bool RadialFog
+    {
+        get => GpuHle.RadialFog;
+        set => GpuHle.RadialFog = value;
+    }
+
+    public static void SetRadialFog(float near, float far, float projH, float centreX)
+    {
+        GpuHle.RadialFogNear = near;
+        GpuHle.RadialFogFar = far;
+        GpuHle.ProjH = projH;
+        GpuHle.ProjCentreX = centreX;
+    }
+
+    public static void SetRadialFogColor(float r, float g, float b)
+    {
+        GpuHle.RadialFogR = r;
+        GpuHle.RadialFogG = g;
+        GpuHle.RadialFogB = b;
+    }
+
     public static int WideMargin(int width)
     {
         return GpuHle.WideMargin(width);
