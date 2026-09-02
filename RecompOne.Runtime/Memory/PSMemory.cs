@@ -95,8 +95,32 @@ public sealed class PSMemory : IMemory
     // any write into the range. Deduped by writer function (each distinct func
     // printed once) so a long play session or a per-frame writer (e.g. player
     // position) doesn't flood the log or hide a rarer writer behind a hit cap.
-    static readonly (uint lo, uint hi)? _watch = ParseWatch();
+    static (uint lo, uint hi)? _watch = ParseWatch();
     static readonly HashSet<string> _watchSeen = new();
+    // Manual arming (bot: `watch <lo> <hi>`) skips the elapsed-seconds gate, so a
+    // hunt can be started at the exact moment of interest.
+    static bool _watchManual;
+
+    // Arm over a physical range, e.g. SetWatch(0x180000, 0x1C0000). The dedupe set
+    // is cleared so the distinct-writer cap applies to this hunt only.
+    public static void SetWatch(uint lo, uint hi)
+    {
+        lock (_watchSeen)
+        {
+            _watchSeen.Clear();
+            _watch = (lo, hi);
+            _watchManual = true;
+        }
+
+        Console.WriteLine($"[watch] armed phys 0x{lo:X8}..0x{hi:X8}");
+    }
+
+    public static void ClearWatch()
+    {
+        _watch = null;
+        _watchManual = false;
+        Console.WriteLine("[watch] disarmed");
+    }
     // KF2_WATCH_AFTER=seconds: arm the watch only after N seconds, so boot-time
     // writers (stack regions are reused by everything) don't fill the dedup cap.
     static readonly System.Diagnostics.Stopwatch _watchClock = System.Diagnostics.Stopwatch.StartNew();
@@ -113,7 +137,7 @@ public sealed class PSMemory : IMemory
     private void TrackWrite(uint phys, int size)
     {
         if (_watch is { } w && phys >= w.lo && phys < w.hi && _watchSeen.Count < 200
-            && _watchClock.ElapsedMilliseconds >= _watchAfterMs)
+            && (_watchManual || _watchClock.ElapsedMilliseconds >= _watchAfterMs))
         {
             var st = new System.Diagnostics.StackTrace(false);
             // Collect the top few recompiled frames (call chain), so a generic

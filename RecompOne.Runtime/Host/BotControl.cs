@@ -69,6 +69,13 @@ public static class BotControl
         {
             case "shot": ShotPath = p.Length > 1 ? p[1] : "shot.png"; break;
             case "vramshot": VramShotPath = p.Length > 1 ? p[1] : "vram.png"; break;
+            case "watch": // watch <hexPhysLo> <hexPhysHi> — arm the write-watch now
+                if (p.Length >= 3)
+                    Memory.PSMemory.SetWatch(Convert.ToUInt32(p[1], 16), Convert.ToUInt32(p[2], 16));
+                break;
+            case "watchoff":
+                Memory.PSMemory.ClearWatch();
+                break;
             case "peek": // peek <hexaddr> <bytes> — hex dump RAM (debug)
             {
                 var mem = Runtime.Mem;
